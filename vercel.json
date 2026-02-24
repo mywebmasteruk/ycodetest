@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "name": "ycode",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "functions": {
+    "app/ycode/api/**/*.ts": {
+      "maxDuration": 60
+    }
+  }
+}
+
+

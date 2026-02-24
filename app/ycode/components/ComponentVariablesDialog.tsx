@@ -1,0 +1,415 @@
+'use client';
+
+/**
+ * Component Variables Dialog
+ *
+ * Dialog for managing text variables in a component
+ * Used when editing components to expose text content as variables
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import Icon from '@/components/ui/icon';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import RichTextEditor from './RichTextEditor';
+import ImageSettings, { type ImageSettingsValue } from './ImageSettings';
+import LinkSettings, { type LinkSettingsValue } from './LinkSettings';
+import AudioSettings, { type AudioSettingsValue } from './AudioSettings';
+import VideoSettings, { type VideoSettingsValue } from './VideoSettings';
+import IconSettings, { type IconSettingsValue } from './IconSettings';
+
+import { useComponentsStore } from '@/stores/useComponentsStore';
+import { useCollectionsStore } from '@/stores/useCollectionsStore';
+import { createTextComponentVariableValue, extractTiptapFromComponentVariable } from '@/lib/variable-utils';
+
+interface ComponentVariablesDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  componentId: string | null;
+  initialVariableId?: string | null;
+}
+
+export default function ComponentVariablesDialog({
+  open,
+  onOpenChange,
+  componentId,
+  initialVariableId,
+}: ComponentVariablesDialogProps) {
+  const getComponentById = useComponentsStore((state) => state.getComponentById);
+  const addTextVariable = useComponentsStore((state) => state.addTextVariable);
+  const addImageVariable = useComponentsStore((state) => state.addImageVariable);
+  const addLinkVariable = useComponentsStore((state) => state.addLinkVariable);
+  const addAudioVariable = useComponentsStore((state) => state.addAudioVariable);
+  const addVideoVariable = useComponentsStore((state) => state.addVideoVariable);
+  const addIconVariable = useComponentsStore((state) => state.addIconVariable);
+  const updateTextVariable = useComponentsStore((state) => state.updateTextVariable);
+  const deleteTextVariable = useComponentsStore((state) => state.deleteTextVariable);
+  const fields = useCollectionsStore((state) => state.fields);
+  const collections = useCollectionsStore((state) => state.collections);
+
+  const [selectedVariableId, setSelectedVariableId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [editingDefaultValue, setEditingDefaultValue] = useState<any>(null);
+
+  // Get component and its variables
+  const component = componentId ? getComponentById(componentId) : undefined;
+  const textVariables = component?.variables || [];
+
+  // Get the currently selected variable
+  const selectedVariable = textVariables.find((v) => v.id === selectedVariableId);
+
+  // Helper to get empty Tiptap doc
+  const getEmptyTiptapDoc = () => ({ type: 'doc', content: [{ type: 'paragraph' }] });
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
+      const target = initialVariableId
+        ? textVariables.find((v) => v.id === initialVariableId)
+        : null;
+
+      if (target) {
+        setSelectedVariableId(target.id);
+        setEditingName(target.name);
+        setEditingDefaultValue(extractTiptapFromComponentVariable(target.default_value));
+      } else if (textVariables.length > 0) {
+        setSelectedVariableId(textVariables[0].id);
+        setEditingName(textVariables[0].name);
+        setEditingDefaultValue(extractTiptapFromComponentVariable(textVariables[0].default_value));
+      } else {
+        setSelectedVariableId(null);
+        setEditingName('');
+        setEditingDefaultValue(getEmptyTiptapDoc());
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, componentId]);
+
+  // Update editing values when selection changes
+  useEffect(() => {
+    if (selectedVariable) {
+      setEditingName(selectedVariable.name);
+      setEditingDefaultValue(extractTiptapFromComponentVariable(selectedVariable.default_value));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVariableId]);
+
+  // Handle creating a new text variable
+  const handleAddTextVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addTextVariable(componentId, 'Text');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Text');
+    }
+  };
+
+  // Handle creating a new image variable
+  const handleAddImageVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addImageVariable(componentId, 'Image');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Image');
+    }
+  };
+
+  // Handle creating a new link variable
+  const handleAddLinkVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addLinkVariable(componentId, 'Link');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Link');
+    }
+  };
+
+  // Handle creating a new audio variable
+  const handleAddAudioVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addAudioVariable(componentId, 'Audio');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Audio');
+    }
+  };
+
+  // Handle creating a new video variable
+  const handleAddVideoVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addVideoVariable(componentId, 'Video');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Video');
+    }
+  };
+
+  // Handle creating a new icon variable
+  const handleAddIconVariable = async () => {
+    if (!componentId) return;
+
+    const newId = await addIconVariable(componentId, 'Icon');
+    if (newId) {
+      setSelectedVariableId(newId);
+      setEditingName('Icon');
+    }
+  };
+
+  // Handle image default value change (via ImageSettings standalone mode)
+  const handleImageDefaultValueChange = (value: ImageSettingsValue) => {
+    if (!componentId || !selectedVariableId) return;
+    updateTextVariable(componentId, selectedVariableId, { default_value: value });
+  };
+
+  // Handle link default value change (via LinkSettings standalone mode)
+  const handleLinkDefaultValueChange = (value: LinkSettingsValue) => {
+    if (!componentId || !selectedVariableId) return;
+    updateTextVariable(componentId, selectedVariableId, { default_value: value });
+  };
+
+  const handleAudioDefaultValueChange = (value: AudioSettingsValue) => {
+    if (!componentId || !selectedVariableId) return;
+    updateTextVariable(componentId, selectedVariableId, { default_value: value });
+  };
+
+  const handleVideoDefaultValueChange = (value: VideoSettingsValue) => {
+    if (!componentId || !selectedVariableId) return;
+    updateTextVariable(componentId, selectedVariableId, { default_value: value });
+  };
+
+  const handleIconDefaultValueChange = (value: IconSettingsValue) => {
+    if (!componentId || !selectedVariableId) return;
+    updateTextVariable(componentId, selectedVariableId, { default_value: value });
+  };
+
+  // Handle updating variable name (debounced)
+  const handleNameChange = (value: string) => {
+    setEditingName(value);
+  };
+
+  // Save name on blur
+  const handleNameBlur = async () => {
+    if (!componentId || !selectedVariableId || !editingName.trim()) return;
+    if (selectedVariable && selectedVariable.name !== editingName.trim()) {
+      await updateTextVariable(componentId, selectedVariableId, { name: editingName.trim() });
+    }
+  };
+
+  // Handle updating default value (local state only)
+  const handleDefaultValueChange = (tiptapContent: any) => {
+    setEditingDefaultValue(tiptapContent);
+  };
+
+  // Save default value on blur
+  const handleDefaultValueBlur = async (tiptapContent: any) => {
+    if (!componentId || !selectedVariableId) return;
+
+    // Check if value has changed
+    const currentValue = selectedVariable?.default_value;
+    const currentTiptap = extractTiptapFromComponentVariable(currentValue);
+
+    // Simple comparison - stringify and compare
+    if (JSON.stringify(currentTiptap) === JSON.stringify(tiptapContent)) {
+      return; // No change, skip API call
+    }
+
+    // Wrap Tiptap content in proper ComponentVariableValue structure (text variable)
+    const variableValue = createTextComponentVariableValue(tiptapContent);
+    await updateTextVariable(componentId, selectedVariableId, { default_value: variableValue });
+  };
+
+  // Handle deleting a variable
+  const handleDeleteVariable = async (variableId: string) => {
+    if (!componentId) return;
+    await deleteTextVariable(componentId, variableId);
+
+    // Select another variable or clear selection
+    const remaining = textVariables.filter((v) => v.id !== variableId);
+    if (remaining.length > 0) {
+      setSelectedVariableId(remaining[0].id);
+      setEditingName(remaining[0].name);
+    } else {
+      setSelectedVariableId(null);
+      setEditingName('');
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-0 pb-0" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Component Variables</DialogTitle>
+        <div className="flex -mx-6 -mt-6 h-120">
+          {/* Left sidebar - variable list */}
+          <div className="w-60 border-r border-border noscrollbar overflow-y-auto px-5 flex flex-col">
+            <header className="py-5 flex justify-between shrink-0">
+              <span className="font-medium">Component variables</span>
+              <div className="-my-1">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="xs" variant="secondary">
+                      <Icon name="plus" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleAddTextVariable}>
+                      <Icon name="text" className="size-3" />
+                      Text
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleAddLinkVariable}>
+                      <Icon name="link" className="size-3" />
+                      Link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleAddIconVariable}>
+                      <Icon name="icon" className="size-3" />
+                      Icon
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleAddImageVariable}>
+                      <Icon name="image" className="size-3" />
+                      Image
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleAddAudioVariable}>
+                      <Icon name="audio" className="size-3" />
+                      Audio
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleAddVideoVariable}>
+                      <Icon name="video" className="size-3" />
+                      Video
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </header>
+
+            {/* Variable list */}
+            <div className="flex flex-col gap-0.5">
+              {textVariables.map((variable) => (
+                <Button
+                  key={variable.id}
+                  variant={selectedVariableId === variable.id ? 'secondary' : 'ghost'}
+                  className="justify-start group"
+                  onClick={() => setSelectedVariableId(variable.id)}
+                >
+                  <Icon name={variable.type === 'image' ? 'image' : variable.type === 'link' ? 'link' : variable.type === 'audio' ? 'audio' : variable.type === 'video' ? 'video' : variable.type === 'icon' ? 'icon' : 'text'} className="size-3 shrink-0" />
+                  <span className="truncate flex-1 text-left">{variable.name}</span>
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    className={`ml-auto text-muted-foreground/50 hover:text-muted-foreground ${selectedVariableId === variable.id ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                    onClick={(e) => { e.stopPropagation(); handleDeleteVariable(variable.id); }}
+                    aria-label={`Delete ${variable.name}`}
+                  >
+                    <Icon name="x" className="size-3.5" />
+                  </span>
+                </Button>
+              ))}
+
+              {textVariables.length === 0 && (
+                <p className="text-xs text-muted-foreground py-2">
+                  No variables yet. Click + to add one.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Right panel - variable editor */}
+          <div className="flex-1 p-6 pt-14 flex flex-col gap-3">
+            {selectedVariable ? (
+              <>
+                <div className="grid grid-cols-3">
+                  <Label variant="muted">Name</Label>
+                  <div className="col-span-2 *:w-full">
+                    <Input
+                      type="text"
+                      placeholder="Variable name"
+                      value={editingName}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      onBlur={handleNameBlur}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 items-start">
+                  <Label variant="muted" className="pt-2">Default</Label>
+                  <div className="col-span-2 *:w-full">
+                    {selectedVariable.type === 'link' ? (
+                      <LinkSettings
+                        mode="standalone"
+                        value={selectedVariable.default_value as LinkSettingsValue}
+                        onChange={handleLinkDefaultValueChange}
+                        allFields={fields}
+                        collections={collections}
+                      />
+                    ) : selectedVariable.type === 'image' ? (
+                      <ImageSettings
+                        mode="standalone"
+                        value={selectedVariable.default_value as ImageSettingsValue}
+                        onChange={handleImageDefaultValueChange}
+                        allFields={fields}
+                        collections={collections}
+                      />
+                    ) : selectedVariable.type === 'audio' ? (
+                      <AudioSettings
+                        mode="standalone"
+                        value={selectedVariable.default_value as AudioSettingsValue}
+                        onChange={handleAudioDefaultValueChange}
+                        allFields={fields}
+                        collections={collections}
+                      />
+                    ) : selectedVariable.type === 'video' ? (
+                      <VideoSettings
+                        mode="standalone"
+                        value={selectedVariable.default_value as VideoSettingsValue}
+                        onChange={handleVideoDefaultValueChange}
+                        allFields={fields}
+                        collections={collections}
+                      />
+                    ) : selectedVariable.type === 'icon' ? (
+                      <IconSettings
+                        mode="standalone"
+                        value={selectedVariable.default_value as IconSettingsValue}
+                        onChange={handleIconDefaultValueChange}
+                      />
+                    ) : (
+                      <RichTextEditor
+                        value={editingDefaultValue}
+                        onChange={handleDefaultValueChange}
+                        onBlur={handleDefaultValueBlur}
+                        placeholder="Default value..."
+                        allFields={fields}
+                        collections={collections}
+                        withFormatting={true}
+                        showFormattingToolbar={false}
+                      />
+                    )}
+                  </div>
+                </div>
+
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                Select a variable or create a new one
+              </div>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
