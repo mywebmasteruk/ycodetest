@@ -7,7 +7,7 @@
  * Supports solid colors (with draggable palette, hue, opacity) and gradients
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import debounce from 'lodash.debounce';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,8 +19,13 @@ import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Separator } from '@/components/ui/separator';
+import SettingsPanel from '@/app/ycode/components/SettingsPanel';
+
+import { useColorVariablesStore } from '@/stores/useColorVariablesStore';
 
 /** CMS color field binding props (optional, for design property data-binding) */
 export interface ColorPickerBindingProps {
@@ -156,12 +161,27 @@ function colorToRgbaString(color: string): string {
   return `rgba(${Math.round(parsed.r)},${Math.round(parsed.g)},${Math.round(parsed.b)},${parsed.a})`;
 }
 
+/**
+ * Extract the variable ID from a color variable reference value.
+ * e.g. "color:var(--64ddf774a5abc)" → "64ddf774a5abc"
+ */
+function extractColorVariableId(value: string): string | null {
+  const match = value.match(/^color:var\(--([^)]+)\)$/);
+  return match ? match[1] : null;
+}
+
 // Helper to generate gradient CSS string
 // For visual display in the gradient bar, always use linear-gradient at 90deg for consistency
-function generateGradientCSS(stops: ColorStop[], type: 'linear' | 'radial', angle?: number): string {
-  const stopsStr = stops.map(s => `${s.color} ${s.position}%`).join(', ');
-  // Always display as linear gradient at 90deg in the bar for visual consistency
-  // This applies to both linear and radial gradients when shown in the bar
+function generateGradientCSS(
+  stops: ColorStop[],
+  _type: 'linear' | 'radial',
+  _angle?: number,
+  resolveColor?: (color: string) => string
+): string {
+  const stopsStr = stops.map(s => {
+    const color = resolveColor ? resolveColor(s.color) : s.color;
+    return `${color} ${s.position}%`;
+  }).join(', ');
   return `linear-gradient(90deg, ${stopsStr})`;
 }
 
@@ -605,6 +625,7 @@ interface GradientBarProps {
   onAddStop: (position?: number) => void;
   gradientType: 'linear' | 'radial';
   angle?: number;
+  resolveColor?: (color: string) => string;
 }
 
 function GradientBar({
@@ -615,12 +636,13 @@ function GradientBar({
   onAddStop,
   gradientType,
   angle = 0,
+  resolveColor,
 }: GradientBarProps) {
   const barRef = React.useRef<HTMLDivElement>(null);
   const [draggingStopId, setDraggingStopId] = React.useState<string | null>(null);
 
   // Always show gradient bar at 90deg (vertical) for visual consistency
-  const gradientCSS = generateGradientCSS(stops, gradientType, 90);
+  const gradientCSS = generateGradientCSS(stops, gradientType, 90, resolveColor);
   const sortedStops = [...stops].sort((a, b) => a.position - b.position);
 
   const handleMouseDown = (e: React.MouseEvent, stopId: string) => {
@@ -786,6 +808,191 @@ function ColorPickerFieldBinding({ binding, stopId }: { binding: ColorPickerBind
   );
 }
 
+// ─── Color Variables Section ────────────────────────────────────────
+
+interface VarEditState {
+  mode: 'edit' | 'create';
+  id?: string;
+  name: string;
+  color: string;
+}
+
+interface ColorVariablesSectionProps {
+  colorVariables: import('@/types').ColorVariable[];
+  activeVariableId: string | null;
+  currentColor: string;
+  editState: VarEditState | null;
+  onEditStateChange: (state: VarEditState | null) => void;
+  onCreate: (name: string, value: string) => Promise<import('@/types').ColorVariable | null>;
+  onUpdate: (id: string, data: { name?: string; value?: string }) => Promise<import('@/types').ColorVariable | null>;
+  onDelete: (id: string) => Promise<boolean>;
+  onSelect: (variableId: string) => void;
+}
+
+function ColorVariablesSection({
+  colorVariables,
+  activeVariableId,
+  currentColor,
+  editState,
+  onEditStateChange,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onSelect,
+}: ColorVariablesSectionProps) {
+  const handleStartCreate = () => {
+    const baseColor = currentColor.split('/')[0];
+    onEditStateChange({ mode: 'create', name: '', color: baseColor || '#000000' });
+  };
+
+  const handleCreate = async () => {
+    if (!editState || editState.mode !== 'create') return;
+    const trimmed = editState.name.trim();
+    if (!trimmed || !editState.color) return;
+    const result = await onCreate(trimmed, editState.color);
+    if (result) {
+      onSelect(result.id);
+      onEditStateChange(null);
+    }
+  };
+
+  const handleStartEdit = (v: import('@/types').ColorVariable) => {
+    onEditStateChange({ mode: 'edit', id: v.id, name: v.name, color: v.value });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editState || editState.mode !== 'edit' || !editState.id) return;
+    const trimmed = editState.name.trim();
+    if (!trimmed || !editState.color) return;
+    await onUpdate(editState.id, { name: trimmed, value: editState.color });
+    onEditStateChange(null);
+  };
+
+  const handleCancel = () => {
+    onEditStateChange(null);
+  };
+
+  const handleDelete = async (id: string) => {
+    await onDelete(id);
+    if (editState?.id === id) onEditStateChange(null);
+  };
+
+  const isEditing = editState?.mode === 'edit';
+  const isCreating = editState?.mode === 'create';
+
+  const isActiveEdit = isEditing || isCreating;
+
+  return (
+    <div>
+      <SettingsPanel
+        title={isActiveEdit ? '' : 'Color variables'}
+        isOpen={true}
+        onToggle={() => {}}
+        collapsible={false}
+        className="pt-2"
+      >
+        <div className="-mt-3 -mb-5 flex flex-col">
+          {isActiveEdit && editState ? (
+            <div className="flex gap-2 py-1.5">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="flex-1"
+                onClick={handleCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1"
+                onClick={isEditing ? handleSaveEdit : handleCreate}
+              >
+                {isEditing ? 'Update' : 'Add'}
+              </Button>
+            </div>
+          ) : (
+            <>
+              {colorVariables.map((v) => (
+                <ContextMenu key={v.id}>
+                  <ContextMenuTrigger asChild>
+                    <div className="w-full flex items-center group relative">
+                      <Button
+                        variant={activeVariableId === v.id ? 'input' : 'ghost'}
+                        className="justify-start w-full"
+                        onClick={() => onSelect(v.id)}
+                      >
+                        <div className="size-5 rounded-[6px] -ml-1 shrink-0 relative overflow-hidden">
+                          <div
+                            className="absolute inset-0 z-20"
+                            style={{ background: v.value }}
+                          />
+                          <div className="absolute inset-0 opacity-15 bg-checkerboard bg-background z-10" />
+                        </div>
+                        <Label className="cursor-pointer truncate">
+                          {v.name}
+                        </Label>
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Icon name="more" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-[120px]">
+                          <DropdownMenuItem onClick={() => handleStartEdit(v)}>
+                            <Icon name="pencil" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => handleDelete(v.id)}
+                          >
+                            <Icon name="x" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => handleStartEdit(v)}>
+                      <Icon name="pencil" />
+                      Edit
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      variant="destructive"
+                      onClick={() => handleDelete(v.id)}
+                    >
+                      <Icon name="x" />
+                      Delete
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-start"
+                onClick={handleStartCreate}
+              >
+                <Icon name="plus" />
+                Add variable
+              </Button>
+            </>
+          )}
+        </div>
+      </SettingsPanel>
+    </div>
+  );
+}
+
+// ─── Main ColorPicker Component ─────────────────────────────────────
+
 export default function ColorPicker({
   value,
   onChange,
@@ -804,12 +1011,35 @@ export default function ColorPicker({
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'solid' | 'linear' | 'radial' | 'image'>('solid');
 
+  // Color variables store
+  const colorVariables = useColorVariablesStore((s) => s.colorVariables);
+  const cvCreate = useColorVariablesStore((s) => s.createColorVariable);
+  const cvUpdate = useColorVariablesStore((s) => s.updateColorVariable);
+  const cvDelete = useColorVariablesStore((s) => s.deleteColorVariable);
+  const setPreviewOverride = useColorVariablesStore((s) => s.setPreviewOverride);
+  const [varEditState, setVarEditState] = useState<VarEditState | null>(null);
+
+  // Detect if the current value is a color variable reference
+  const activeVariableId = useMemo(() => {
+    if (!value) return null;
+    return extractColorVariableId(value);
+  }, [value]);
+
+  const activeVariable = useMemo(() => {
+    if (!activeVariableId) return null;
+    return colorVariables.find((v) => v.id === activeVariableId) ?? null;
+  }, [activeVariableId, colorVariables]);
+
   const displayValue = value || '';
   const isGradient = displayValue.startsWith('linear') || displayValue.startsWith('radial');
   const isTransparent = displayValue === 'transparent';
+  const isColorVariable = !!activeVariableId;
 
   // Format display value for user-friendly names
   const getDisplayText = (val: string, opacity?: number): string => {
+    if (val.startsWith('color:var(')) {
+      return activeVariable?.name || 'Variable';
+    }
     if (val.startsWith('linear-gradient')) return 'Linear';
     if (val.startsWith('radial-gradient')) return 'Radial';
     if (val === 'transparent') return 'Transparent';
@@ -868,6 +1098,25 @@ export default function ColorPicker({
     isHexInputUpdating.current = false;
   }, [rgbaColor, isGradient, activeTab]);
 
+  // Sync picker to variable color when entering edit mode, clear preview on exit
+  const prevVarEditId = useRef<string | null>(null);
+  useEffect(() => {
+    const editKey = varEditState ? (varEditState.id ?? '_create') : null;
+    if (editKey && editKey !== prevVarEditId.current && varEditState) {
+      const parsed = parseColor(varEditState.color);
+      setRgbaColor(parsed);
+      const hsv = rgbToHsv(parsed.r, parsed.g, parsed.b);
+      setHue(hsv.h);
+      setSaturation(hsv.s);
+      setHsvValue(hsv.v);
+      isInternalUpdate.current = true;
+    }
+    if (!varEditState) {
+      setPreviewOverride(null);
+    }
+    prevVarEditId.current = editKey;
+  }, [varEditState, setPreviewOverride]);
+
   // Gradient state
   const [linearStops, setLinearStops] = useState<ColorStop[]>([
     { id: 'stop-0', color: '#000000', position: 0 },
@@ -906,7 +1155,11 @@ export default function ColorPicker({
   // Sync rgba color when value changes externally (for solid colors)
   useEffect(() => {
     if (!isGradient && displayValue) {
-      const newColor = parseColor(displayValue);
+      // Resolve color variable to its hex value for the picker
+      const colorToSync = isColorVariable && activeVariable
+        ? activeVariable.value
+        : displayValue;
+      const newColor = parseColor(colorToSync);
       setRgbaColor(newColor);
       // Only update HSV values when color changes externally (not from internal updates)
       if (!isInternalUpdate.current) {
@@ -918,7 +1171,7 @@ export default function ColorPicker({
     }
     // Reset flag after sync
     isInternalUpdate.current = false;
-  }, [displayValue, isGradient]);
+  }, [displayValue, isGradient, isColorVariable, activeVariable]);
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -946,8 +1199,16 @@ export default function ColorPicker({
     setRgbaColor(color);
     // Mark as internal update to prevent hue recalculation in useEffect
     isInternalUpdate.current = true;
-    // Use immediate onChange for solid colors to avoid delays
-    immediateOnChange(rgbaToHex(color));
+    if (varEditState?.mode === 'edit' && varEditState.id) {
+      const hex = rgbaToHex(color).split('/')[0];
+      setVarEditState({ ...varEditState, color: hex });
+      setPreviewOverride({ id: varEditState.id, value: hex });
+    } else {
+      immediateOnChange(rgbaToHex(color));
+      if (varEditState?.mode === 'create') {
+        setVarEditState({ ...varEditState, color: rgbaToHex(color).split('/')[0] });
+      }
+    }
   };
 
   // EyeDropper handler for solid colors
@@ -1160,10 +1421,27 @@ export default function ColorPicker({
   // Format: linear-gradient(180deg,rgba(0,0,0,1)0%,rgba(140,0,0,1)43.31%...)
   // No spaces after commas, no space between color and position
   // Convert colors to rgba format for Tailwind compatibility
+  const formatStopColor = useCallback((color: string): string => {
+    if (color.startsWith('var(--')) return color;
+    return colorToRgbaString(color);
+  }, []);
+
+  const resolveStopColor = useCallback((color: string): string => {
+    if (color.startsWith('var(--')) {
+      const id = color.match(/^var\(--([^)]+)\)$/)?.[1];
+      if (id) {
+        const cv = colorVariables.find((v) => v.id === id);
+        if (cv) return cv.value;
+      }
+      return '#888888';
+    }
+    return color;
+  }, [colorVariables]);
+
   const handleLinearGradientChange = (angle: number, stops: ColorStop[]) => {
     isInternalGradientChange.current = true;
     binding?.onGradientSync?.('linear', stops.map(s => ({ id: s.id, position: s.position, color: s.color })), angle);
-    const stopsStr = stops.map(s => `${colorToRgbaString(s.color)}${s.position}%`).join(',');
+    const stopsStr = stops.map(s => `${formatStopColor(s.color)}${s.position}%`).join(',');
     const gradientValue = `linear-gradient(${angle}deg,${stopsStr})`;
     // Use immediate onChange for gradients to ensure ref is still set when parsing useEffect runs
     immediateOnChange(gradientValue);
@@ -1172,7 +1450,7 @@ export default function ColorPicker({
   const handleRadialGradientChange = (stops: ColorStop[]) => {
     isInternalGradientChange.current = true;
     binding?.onGradientSync?.('radial', stops.map(s => ({ id: s.id, position: s.position, color: s.color })));
-    const stopsStr = stops.map(s => `${colorToRgbaString(s.color)}${s.position}%`).join(',');
+    const stopsStr = stops.map(s => `${formatStopColor(s.color)}${s.position}%`).join(',');
     const gradientValue = `radial-gradient(circle,${stopsStr})`;
     // Use immediate onChange for gradients to ensure ref is still set when parsing useEffect runs
     immediateOnChange(gradientValue);
@@ -1498,7 +1776,7 @@ export default function ColorPicker({
       <PopoverTrigger asChild>
       {hasValue || imagePreviewUrl ? (
         <div className="flex items-center justify-start h-8 rounded-lg bg-input hover:bg-input/60 px-2.5 cursor-pointer">
-          <div className={cn('size-5 rounded-[6px] shrink-0 mr-2 -ml-1 relative overflow-hidden outline dark:outline-white/10 outline-offset-[-1px]', (isTransparent || imagePreviewUrl) && 'overflow-hidden')}>
+          <div className={cn('size-5 rounded-[6px] shrink-0 mr-2 -ml-1 relative overflow-hidden outline dark:outline-white/10 outline-offset-[-1px]', (isTransparent || imagePreviewUrl || isColorVariable) && 'overflow-hidden')}>
             {imagePreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -1507,7 +1785,7 @@ export default function ColorPicker({
                 alt=""
               />
             ) : (
-              <div className="absolute inset-0 z-20" style={isTransparent ? undefined : { background: isGradient ? displayValue : `rgba(${Math.round(rgbaColor.r)},${Math.round(rgbaColor.g)},${Math.round(rgbaColor.b)},${rgbaColor.a})` }} />
+              <div className="absolute inset-0 z-20" style={isTransparent ? undefined : { background: isColorVariable && activeVariable ? activeVariable.value : isGradient ? displayValue : `rgba(${Math.round(rgbaColor.r)},${Math.round(rgbaColor.g)},${Math.round(rgbaColor.b)},${rgbaColor.a})` }} />
             )}
             <div className="absolute inset-0 opacity-15 bg-checkerboard bg-background z-10" />
           </div>
@@ -1552,7 +1830,18 @@ export default function ColorPicker({
           value={activeTab} onValueChange={handleTabChange}
           className="gap-3!"
         >
-          {!solidOnly && (
+          {varEditState ? (
+            <Input
+              value={varEditState.name}
+              onChange={(e) => setVarEditState({ ...varEditState, name: e.target.value })}
+              placeholder="Variable name"
+              className="h-8 text-xs"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setVarEditState(null);
+              }}
+            />
+          ) : !solidOnly && (
             <TabsList className="w-full">
               <TabsTrigger value="solid">
                 <Icon name="color" />
@@ -1693,6 +1982,7 @@ export default function ColorPicker({
                     onAddStop={(position) => addColorStop('linear', position)}
                     gradientType="linear"
                     angle={linearAngle}
+                    resolveColor={resolveStopColor}
                   />
                 </div>
                 <Button
@@ -1843,6 +2133,7 @@ export default function ColorPicker({
                 }}
                 onAddStop={(position) => addColorStop('radial', position)}
                 gradientType="radial"
+                resolveColor={resolveStopColor}
               />
 
               {/* Color Picker for Selected Stop */}
@@ -1978,6 +2269,27 @@ export default function ColorPicker({
           )}
 
         </Tabs>
+
+        <Separator className="my-2" />
+
+        <ColorVariablesSection
+          colorVariables={colorVariables}
+          activeVariableId={activeVariableId}
+          currentColor={rgbaToHex(rgbaColor)}
+          editState={varEditState}
+          onEditStateChange={setVarEditState}
+          onCreate={cvCreate}
+          onUpdate={cvUpdate}
+          onDelete={cvDelete}
+          onSelect={(varId) => {
+            if ((activeTab === 'linear' || activeTab === 'radial') && selectedStopId) {
+              updateColorStop(activeTab, selectedStopId, { color: `var(--${varId})` });
+            } else {
+              immediateOnChange(`color:var(--${varId})`);
+            }
+          }}
+        />
+
       </PopoverContent>
     </Popover>
   );

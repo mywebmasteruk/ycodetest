@@ -14,6 +14,7 @@ import { resolveInlineVariables, resolveImageUrl } from '@/lib/resolve-cms-varia
 import { getSettingsByKeys } from '@/lib/repositories/settingsRepository';
 import { getAssetById } from '@/lib/repositories/assetRepository';
 import { getAssetProxyUrl } from '@/lib/asset-utils';
+import { getAllColorVariables } from '@/lib/repositories/colorVariableRepository';
 
 /**
  * Global page render settings fetched once per page render
@@ -23,6 +24,7 @@ export interface GlobalPageSettings {
   globalCanonicalUrl?: string | null;
   gaMeasurementId?: string | null;
   publishedCss?: string | null;
+  colorVariablesCss?: string | null;
   globalCustomCodeHead?: string | null;
   globalCustomCodeBody?: string | null;
   ycodeBadge?: boolean;
@@ -95,11 +97,23 @@ export const fetchGlobalPageSettings = cache(async (): Promise<GlobalPageSetting
     }
   }
 
+  let colorVariablesCss: string | null = null;
+  try {
+    const colorVars = await getAllColorVariables();
+    if (colorVars.length > 0) {
+      const declarations = colorVars.map((v) => `--${v.id}: ${v.value};`).join(' ');
+      colorVariablesCss = `:root { ${declarations} }`;
+    }
+  } catch {
+    // Ignore errors fetching color variables
+  }
+
   return {
     googleSiteVerification: settings.google_site_verification || null,
     globalCanonicalUrl: settings.global_canonical_url || null,
     gaMeasurementId: settings.ga_measurement_id || null,
     publishedCss: settings.published_css || null,
+    colorVariablesCss,
     globalCustomCodeHead: settings.custom_code_head || null,
     globalCustomCodeBody: settings.custom_code_body || null,
     ycodeBadge: settings.ycode_badge ?? true,

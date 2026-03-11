@@ -849,6 +849,33 @@ export async function uploadFileApi(
   }
 }
 
+// Color Variables API
+export const colorVariablesApi = {
+  async getAll(): Promise<ApiResponse<import('@/types').ColorVariable[]>> {
+    return apiRequest<import('@/types').ColorVariable[]>('/ycode/api/color-variables');
+  },
+
+  async create(data: { name: string; value: string }): Promise<ApiResponse<import('@/types').ColorVariable>> {
+    return apiRequest<import('@/types').ColorVariable>('/ycode/api/color-variables', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(id: string, data: { name?: string; value?: string }): Promise<ApiResponse<import('@/types').ColorVariable>> {
+    return apiRequest<import('@/types').ColorVariable>(`/ycode/api/color-variables/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async delete(id: string): Promise<ApiResponse<void>> {
+    return apiRequest<void>(`/ycode/api/color-variables/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
 /**
  * Delete an asset (from both storage and database)
  *

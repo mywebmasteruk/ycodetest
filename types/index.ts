@@ -1031,6 +1031,15 @@ export interface Setting {
   updated_at: string;
 }
 
+// Color Variables
+export interface ColorVariable {
+  id: string;
+  name: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface VariableType {
   id?: string; // Reference to ComponentVariable.id (for component variable linking)
   type: 'field' | 'asset' | 'video'  | 'dynamic_rich_text' | 'dynamic_text'| 'static_text';
