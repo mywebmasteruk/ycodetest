@@ -1,3 +1,4 @@
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSettingByKey, setSetting } from '@/lib/repositories/settingsRepository';
 
@@ -53,6 +54,9 @@ export async function PUT(
     }
 
     await setSetting(key, value);
+
+    // Invalidate ISR cache so public pages pick up the new setting
+    revalidateTag('all-pages', { expire: 0 });
 
     return NextResponse.json({
       data: { key, value },

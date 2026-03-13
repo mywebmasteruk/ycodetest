@@ -1,10 +1,12 @@
+import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { setSettings } from '@/lib/repositories/settingsRepository';
 
 /**
  * PUT /ycode/api/settings/batch
  *
- * Update multiple settings at once
+ * Update multiple settings at once.
+ * Invalidates the public page cache so ISR pages pick up the new values.
  * Request body: { settings: { key1: value1, key2: value2, ... } }
  */
 export async function PUT(request: NextRequest) {
@@ -20,6 +22,9 @@ export async function PUT(request: NextRequest) {
     }
 
     const count = await setSettings(settings);
+
+    // Settings like custom_code_body, ga_measurement_id, etc. affect ISR-cached pages
+    revalidateTag('all-pages', { expire: 0 });
 
     return NextResponse.json({
       data: { count },

@@ -1,5 +1,6 @@
 import AnimationInitializer from '@/components/AnimationInitializer';
 import ContentHeightReporter from '@/components/ContentHeightReporter';
+import CustomCodeInjector from '@/components/CustomCodeInjector';
 import LayerRenderer from '@/components/LayerRenderer';
 import SliderInitializer from '@/components/SliderInitializer';
 import LightboxInitializer from '@/components/LightboxInitializer';
@@ -378,12 +379,12 @@ export default async function PageRenderer({
 
       {/* Inject global custom body code (applies to all pages) */}
       {globalCustomCodeBody && (
-        <div dangerouslySetInnerHTML={{ __html: globalCustomCodeBody }} />
+        <CustomCodeInjector html={globalCustomCodeBody} />
       )}
 
       {/* Inject page-specific custom body code */}
       {pageCustomCodeBody && (
-        <div dangerouslySetInnerHTML={{ __html: pageCustomCodeBody }} />
+        <CustomCodeInjector html={pageCustomCodeBody} />
       )}
 
       {/* Ycode badge (only on published pages, not in preview) */}

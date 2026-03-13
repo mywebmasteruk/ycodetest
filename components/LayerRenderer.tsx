@@ -1549,6 +1549,7 @@ const LayerItem: React.FC<{
       'data-is-empty': isEmpty ? 'true' : 'false',
       ...(hasVisualStyle && { 'data-has-visual': 'true' }),
       ...(enableDragDrop && !isEditing && !isLockedByOther ? { ...normalizedAttributes, ...listeners } : normalizedAttributes),
+      ...(!isEditMode && { suppressHydrationWarning: true }),
     };
 
     // When a button is rendered as <a>, apply link attributes directly
