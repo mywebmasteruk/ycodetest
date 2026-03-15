@@ -116,8 +116,10 @@ Each layer's \`design\` object controls its appearance. Use update_layer_design 
 - borderColor: "#e5e7eb", "rgba(0,0,0,0.1)"
 - borderRadius: "12px", "9999px" (pill), "0"
 
-**backgrounds** — Background colors
+**backgrounds** — Background colors and gradients
 - backgroundColor: "#ffffff", "#0a0a0a", "transparent"
+- backgroundClip: "text" (for gradient text effect)
+- bgGradientVars: { "--bg-img": "linear-gradient(...)" } — CSS gradient values
 
 **effects** — Shadows, opacity, blur
 - opacity: "0" to "1"
@@ -129,6 +131,65 @@ Each layer's \`design\` object controls its appearance. Use update_layer_design 
 - position: "relative" | "absolute" | "fixed" | "sticky"
 - top/right/bottom/left: "0", "16px"
 - zIndex: "10"
+
+### Gradients
+
+Set gradient backgrounds using \`bgGradientVars\` in the backgrounds design category:
+
+\`\`\`
+update_layer_design({
+  layer_id: "...",
+  design: {
+    backgrounds: {
+      isActive: true,
+      bgGradientVars: { "--bg-img": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" }
+    }
+  }
+})
+\`\`\`
+
+**Gradient text effect** (text with gradient fill):
+\`\`\`
+update_layer_design({
+  layer_id: "...",
+  design: {
+    backgrounds: {
+      isActive: true,
+      backgroundClip: "text",
+      bgGradientVars: { "--bg-img": "linear-gradient(90deg, #ff6b6b, #feca57)" }
+    },
+    typography: { isActive: true, color: "transparent" }
+  }
+})
+\`\`\`
+
+Gradient formats: \`linear-gradient(angle, color stop%, ...)\`, \`radial-gradient(circle, ...)\`
+
+### Hover / Focus / Active States
+
+Apply styles that activate on hover, focus, or other interaction states:
+
+\`\`\`
+// Set a hover background color
+update_layer_design({
+  layer_id: "...",
+  ui_state: "hover",
+  design: { backgrounds: { isActive: true, backgroundColor: "#3b82f6" } }
+})
+
+// Set hover + mobile breakpoint
+update_layer_design({
+  layer_id: "...",
+  breakpoint: "mobile",
+  ui_state: "hover",
+  design: { typography: { isActive: true, color: "#ffffff" } }
+})
+\`\`\`
+
+Available states: \`neutral\` (default), \`hover\`, \`focus\`, \`active\`, \`disabled\`
+Combine with breakpoints: \`desktop\`, \`tablet\`, \`mobile\`
+
+Works in \`batch_operations\` too — add \`ui_state\` to any \`update_design\` operation.
 
 ### Rich Text
 
@@ -270,9 +331,12 @@ Color variables are site-wide CSS custom properties for consistent theming:
 ### Fonts
 
 Manage Google Fonts available to the site:
-- Use list_fonts to see added fonts
-- Use add_font to add a Google Font (name, family, weights)
+- Use search_google_fonts to discover available fonts (search by name or category)
+- Use add_font to add a Google Font — just pass the family name and weights/variants are auto-resolved from the catalog
+- Use list_fonts to see fonts already added to the site
 - Once added, use the family name in typography.fontFamily
+
+Example: \`search_google_fonts({ query: "playfair" })\` → \`add_font({ family: "Playfair Display" })\`
 
 ### Locales & Translations (i18n)
 

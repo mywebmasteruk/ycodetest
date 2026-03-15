@@ -1,6 +1,43 @@
 import { z } from 'zod';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { getAllFonts, createFont, updateFont, deleteFont } from '@/lib/repositories/fontRepository';
+
+interface GoogleFontEntry {
+  family: string;
+  variants: string[];
+  category: string;
+  axes?: { tag: string; start: number; end: number }[];
+}
+
+let catalogCache: GoogleFontEntry[] | null = null;
+
+async function loadGoogleFontsCatalog(): Promise<GoogleFontEntry[]> {
+  if (catalogCache) return catalogCache;
+  try {
+    const raw = await readFile(join(process.cwd(), 'storage/fonts/google-fonts.json'), 'utf-8');
+    catalogCache = JSON.parse(raw) as GoogleFontEntry[];
+    return catalogCache;
+  } catch {
+    return [];
+  }
+}
+
+function getWeightsFromEntry(entry: GoogleFontEntry): string[] {
+  const wghtAxis = entry.axes?.find(a => a.tag === 'wght');
+  if (wghtAxis) {
+    const weights: string[] = [];
+    for (const w of [100, 200, 300, 400, 500, 600, 700, 800, 900]) {
+      if (w >= wghtAxis.start && w <= wghtAxis.end) weights.push(String(w));
+    }
+    return weights.length > 0 ? weights : ['400'];
+  }
+  return entry.variants
+    .filter(v => !v.includes('italic'))
+    .map(v => v === 'regular' ? '400' : v.replace(/italic$/, ''))
+    .filter(v => /^\d+$/.test(v));
+}
 
 export function registerFontTools(server: McpServer) {
   server.tool(
@@ -27,31 +64,82 @@ export function registerFontTools(server: McpServer) {
   );
 
   server.tool(
-    'add_font',
-    'Add a Google Font to the site. Once added, use the family name in typography.fontFamily design property.',
+    'search_google_fonts',
+    `Search the Google Fonts catalog to discover available fonts. Returns font family names, categories, available weights, and variants. Use this before add_font to find the correct font details.`,
     {
-      name: z.string().describe('Slug-friendly name (e.g. "open-sans", "playfair-display")'),
-      family: z.string().describe('Display family name (e.g. "Open Sans", "Playfair Display")'),
-      category: z.string().optional().describe('Font category: "sans-serif", "serif", "display", "monospace". Defaults to "sans-serif".'),
-      weights: z.array(z.string()).optional().describe('Available weights (e.g. ["400", "500", "600", "700"]). Defaults to ["400", "700"].'),
-      variants: z.array(z.string()).optional().describe('Available variants (e.g. ["regular", "italic", "700"]). Defaults to ["regular"].'),
+      query: z.string().optional().describe('Search by font name (e.g. "playfair", "mono"). Omit to get the top fonts by popularity.'),
+      category: z.enum(['sans-serif', 'serif', 'display', 'handwriting', 'monospace']).optional()
+        .describe('Filter by category'),
+      limit: z.number().optional().describe('Max results (default 20, max 50)'),
     },
-    async ({ name, family, category, weights, variants }) => {
+    async ({ query, category, limit }) => {
+      const catalog = await loadGoogleFontsCatalog();
+      if (catalog.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'Error: Google Fonts catalog not available.' }], isError: true };
+      }
+
+      let results = catalog;
+      if (query) {
+        const q = query.toLowerCase();
+        results = results.filter(f => f.family.toLowerCase().includes(q));
+      }
+      if (category) {
+        results = results.filter(f => f.category === category);
+      }
+
+      const max = Math.min(limit || 20, 50);
+      const matches = results.slice(0, max).map(f => ({
+        family: f.family,
+        category: f.category,
+        weights: getWeightsFromEntry(f),
+        variants: f.variants,
+        variable: !!f.axes?.find(a => a.tag === 'wght'),
+      }));
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ total: results.length, showing: matches.length, fonts: matches }, null, 2),
+        }],
+      };
+    },
+  );
+
+  server.tool(
+    'add_font',
+    `Add a Google Font to the site. Once added, use the family name in typography.fontFamily design property.
+
+TIP: Use search_google_fonts first to discover available fonts. If you provide just the family name, weights and variants will be auto-resolved from the catalog.`,
+    {
+      family: z.string().describe('Google Font family name (e.g. "Open Sans", "Playfair Display")'),
+      weights: z.array(z.string()).optional().describe('Weights to include. Auto-resolved from catalog if omitted.'),
+      variants: z.array(z.string()).optional().describe('Variants to include. Auto-resolved from catalog if omitted.'),
+    },
+    async ({ family, weights, variants }) => {
+      const catalog = await loadGoogleFontsCatalog();
+      const entry = catalog.find(f => f.family.toLowerCase() === family.toLowerCase());
+
+      const resolvedFamily = entry?.family || family;
+      const resolvedCategory = entry?.category || 'sans-serif';
+      const resolvedWeights = weights || (entry ? getWeightsFromEntry(entry) : ['400', '700']);
+      const resolvedVariants = variants || entry?.variants || ['regular'];
+      const name = resolvedFamily.toLowerCase().replace(/\s+/g, '-');
+
       const font = await createFont({
         name,
-        family,
+        family: resolvedFamily,
         type: 'google',
-        category: category || 'sans-serif',
-        weights: weights || ['400', '700'],
-        variants: variants || ['regular'],
+        category: resolvedCategory,
+        weights: resolvedWeights,
+        variants: resolvedVariants,
       });
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Added font "${family}"`,
-            font: { id: font.id, name: font.name, family: font.family },
-            usage: `Set typography.fontFamily to "${family}" in layer design`,
+            message: `Added font "${resolvedFamily}"`,
+            font: { id: font.id, name: font.name, family: font.family, weights: resolvedWeights },
+            usage: `Set typography.fontFamily to "${resolvedFamily}" in layer design`,
           }, null, 2),
         }],
       };

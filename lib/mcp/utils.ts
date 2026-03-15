@@ -3,9 +3,15 @@
  * These are simplified versions focused on the MCP tool use case.
  */
 
-import type { Layer, DesignProperties } from '@/types';
+import type { Layer, DesignProperties, Breakpoint, UIState } from '@/types';
 import { generateId } from '@/lib/utils';
-import { designToClassString } from '@/lib/tailwind-class-mapper';
+import {
+  designToClassString,
+  propertyToClass,
+  setBreakpointClass,
+  buildBgImgVarName,
+  buildBgImgClass,
+} from '@/lib/tailwind-class-mapper';
 import { getLayerFromTemplate } from '@/lib/templates/blocks';
 
 export { generateId } from '@/lib/utils';
@@ -229,20 +235,83 @@ function blockToTiptapNode(block: RichTextBlock): TiptapNode {
 export function applyDesignToLayer(
   layer: Layer,
   design: Record<string, Record<string, unknown>>,
+  breakpoint: Breakpoint = 'desktop',
+  uiState: UIState = 'neutral',
 ): Layer {
-  const mergedDesign: DesignProperties = { ...layer.design };
+  const isNeutralDesktop = breakpoint === 'desktop' && uiState === 'neutral';
 
-  for (const [cat, props] of Object.entries(design)) {
-    if (props && typeof props === 'object') {
-      mergedDesign[cat as keyof DesignProperties] = {
-        ...(mergedDesign[cat as keyof DesignProperties] || {}),
-        ...props,
-      } as DesignProperties[keyof DesignProperties];
+  // Extract bgGradientVars before processing — it's not a simple design property
+  const bgGradientVars = (design.backgrounds as Record<string, unknown>)?.bgGradientVars as Record<string, string> | undefined;
+  const inputDesign = { ...design };
+  if (inputDesign.backgrounds) {
+    const { bgGradientVars: _, ...restBg } = inputDesign.backgrounds as Record<string, unknown>;
+    inputDesign.backgrounds = restBg;
+  }
+
+  if (isNeutralDesktop) {
+    // Simple path: merge design and regenerate all classes (preserving state/breakpoint classes)
+    const mergedDesign: DesignProperties = { ...layer.design };
+    for (const [cat, props] of Object.entries(inputDesign)) {
+      if (props && typeof props === 'object') {
+        mergedDesign[cat as keyof DesignProperties] = {
+          ...(mergedDesign[cat as keyof DesignProperties] || {}),
+          ...props,
+        } as DesignProperties[keyof DesignProperties];
+      }
+    }
+
+    // Handle gradient vars
+    if (bgGradientVars) {
+      const bgDesign = mergedDesign.backgrounds || {};
+      bgDesign.bgGradientVars = { ...bgDesign.bgGradientVars, ...bgGradientVars };
+      const varName = buildBgImgVarName('desktop', 'neutral');
+      if (bgGradientVars[varName]) {
+        bgDesign.backgroundImage = varName;
+      }
+      mergedDesign.backgrounds = bgDesign;
+    }
+
+    // Regenerate base classes, preserve any state/breakpoint-prefixed classes
+    const existingClasses = Array.isArray(layer.classes) ? layer.classes : (layer.classes || '').split(' ').filter(Boolean);
+    const stateClasses = existingClasses.filter(cls =>
+      cls.match(/^(max-lg:|max-md:|lg:|md:)?(hover:|focus:|active:|disabled:|current:)/) ||
+      cls.match(/^(max-lg:|max-md:)/)
+    );
+    const baseClasses = designToClassString(mergedDesign);
+    const allClasses = baseClasses ? `${baseClasses} ${stateClasses.join(' ')}`.trim() : stateClasses.join(' ');
+
+    return { ...layer, design: mergedDesign, classes: allClasses };
+  }
+
+  // State/breakpoint path: apply each property with prefix via setBreakpointClass
+  let classes = Array.isArray(layer.classes) ? [...layer.classes] : (layer.classes || '').split(' ').filter(Boolean);
+
+  for (const [cat, props] of Object.entries(inputDesign)) {
+    if (!props || typeof props !== 'object') continue;
+    for (const [prop, value] of Object.entries(props as Record<string, unknown>)) {
+      if (prop === 'isActive' || value === undefined || value === null) continue;
+      const cls = propertyToClass(cat as keyof DesignProperties, prop, String(value));
+      if (cls) {
+        classes = setBreakpointClass(classes, prop, cls, breakpoint, uiState);
+      }
     }
   }
 
-  const classes = designToClassString(mergedDesign);
-  return { ...layer, design: mergedDesign, classes };
+  // Handle gradient vars for non-neutral states
+  if (bgGradientVars) {
+    const bgDesign = { ...(layer.design?.backgrounds || {}) };
+    bgDesign.bgGradientVars = { ...bgDesign.bgGradientVars, ...bgGradientVars };
+    const varName = buildBgImgVarName(breakpoint, uiState);
+    if (bgGradientVars[varName]) {
+      bgDesign.backgroundImage = bgDesign.backgroundImage || buildBgImgVarName('desktop', 'neutral');
+      const bgImgClass = buildBgImgClass(varName);
+      classes = setBreakpointClass(classes, 'backgroundImage', bgImgClass, breakpoint, uiState);
+    }
+    const mergedDesign = { ...layer.design, backgrounds: bgDesign };
+    return { ...layer, design: mergedDesign, classes: classes.join(' ') };
+  }
+
+  return { ...layer, classes: classes.join(' ') };
 }
 
 // ── Element Templates ────────────────────────────────────────────────────────

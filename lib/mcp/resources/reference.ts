@@ -117,7 +117,7 @@ export function registerReferenceResources(server: McpServer) {
         uri: 'ycode://reference/design-properties',
         mimeType: 'application/json',
         text: JSON.stringify({
-          instructions: 'Set isActive: true on any category for it to take effect.',
+          instructions: 'Set isActive: true on any category for it to take effect. Use ui_state parameter for hover/focus/active styles. Use bgGradientVars for gradient backgrounds.',
           categories: {
             layout: {
               display: { type: 'enum', values: ['Flex', 'block', 'inline-block', 'grid', 'hidden'] },
@@ -149,6 +149,12 @@ export function registerReferenceResources(server: McpServer) {
             },
             backgrounds: {
               backgroundColor: { type: 'color', examples: ['#ffffff', '#0a0a0a'] },
+              backgroundClip: { type: 'enum', values: ['text', 'border', 'padding'] },
+              bgGradientVars: {
+                type: 'record',
+                description: 'CSS gradient values keyed by var name. "--bg-img" for desktop neutral.',
+                examples: [{ '--bg-img': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }],
+              },
             },
             effects: {
               opacity: { type: 'string' },

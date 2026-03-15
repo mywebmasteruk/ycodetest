@@ -68,6 +68,9 @@ export const designSchema = z.object({
     backgroundSize: z.string().optional(),
     backgroundPosition: z.string().optional(),
     backgroundRepeat: z.string().optional(),
+    backgroundClip: z.string().optional().describe('"text" for gradient text effect, "border" or "padding"'),
+    bgGradientVars: z.record(z.string(), z.string()).optional()
+      .describe('Gradient CSS values keyed by var name. Use "--bg-img" for desktop neutral. Value is a CSS gradient like "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"'),
   }).optional(),
   effects: z.object({
     isActive: z.boolean().optional(),

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { Layer } from '@/types';
+import type { Layer, Breakpoint, UIState } from '@/types';
 import { getDraftLayers, upsertDraftLayers } from '@/lib/repositories/pageLayersRepository';
 import {
   findLayerById,
@@ -47,6 +47,9 @@ const updateDesignOp = z.object({
   type: z.literal('update_design'),
   layer_id: z.string().describe('Layer ID or ref_id from a prior add_layer'),
   design: designSchema,
+  breakpoint: z.enum(['desktop', 'tablet', 'mobile']).default('desktop').optional(),
+  ui_state: z.enum(['neutral', 'hover', 'focus', 'active', 'disabled']).default('neutral').optional()
+    .describe('UI state: "hover" for hover styles, "focus" for focus, etc.'),
 });
 
 const updateTextOp = z.object({
@@ -159,8 +162,10 @@ EXAMPLE:
               const layerId = resolveId(op.layer_id, refMap);
               const layer = findLayerById(layers, layerId);
               if (!layer) { results.push({ op: i, status: 'error', detail: `Layer "${op.layer_id}" not found` }); continue; }
+              const bp = (op as { breakpoint?: string }).breakpoint || 'desktop';
+              const state = (op as { ui_state?: string }).ui_state || 'neutral';
               layers = updateLayerById(layers, layerId, (l) =>
-                applyDesignToLayer(l, op.design as Record<string, Record<string, unknown>>),
+                applyDesignToLayer(l, op.design as Record<string, Record<string, unknown>>, bp as Breakpoint, state as UIState),
               );
               results.push({ op: i, status: 'ok', detail: `Styled "${layer.customName || layer.name}"` });
               break;

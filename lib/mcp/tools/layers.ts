@@ -119,15 +119,25 @@ NESTING RULES:
     `Update the visual design of a layer. Merges design properties into existing design
 and regenerates Tailwind CSS classes.
 
-IMPORTANT: Set isActive: true on any design category you want to apply.`,
+IMPORTANT: Set isActive: true on any design category you want to apply.
+
+HOVER/FOCUS STATES: Set ui_state to apply styles only on hover, focus, or active.
+Example: { backgrounds: { isActive: true, backgroundColor: "#3b82f6" }, ui_state: "hover" }
+produces the class "hover:bg-[#3b82f6]".
+
+GRADIENTS: Use bgGradientVars in backgrounds to set CSS gradients.
+Example: { backgrounds: { isActive: true, bgGradientVars: { "--bg-img": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" } } }
+For gradient text: also set backgroundClip: "text" and color to "transparent".`,
     {
       page_id: z.string().describe('The page ID'),
       layer_id: z.string().describe('The layer ID to update'),
       breakpoint: z.enum(['desktop', 'tablet', 'mobile']).default('desktop')
         .describe('Responsive breakpoint. Desktop is default.'),
+      ui_state: z.enum(['neutral', 'hover', 'focus', 'active', 'disabled']).default('neutral')
+        .describe('UI state to style. Use "hover" for hover effects, "focus" for focus styles, etc.'),
       design: designSchema,
     },
-    async ({ page_id, layer_id, design }) => {
+    async ({ page_id, layer_id, breakpoint, ui_state, design }) => {
       const layers = await getPageLayers(page_id);
 
       const layer = findLayerById(layers, layer_id);
@@ -136,17 +146,19 @@ IMPORTANT: Set isActive: true on any design category you want to apply.`,
       }
 
       const updated = updateLayerById(layers, layer_id, (l) =>
-        applyDesignToLayer(l, design as Record<string, Record<string, unknown>>),
+        applyDesignToLayer(l, design as Record<string, Record<string, unknown>>, breakpoint, ui_state),
       );
 
       await savePageLayers(page_id, updated);
 
       const updatedLayer = findLayerById(updated, layer_id);
+      const stateLabel = ui_state !== 'neutral' ? ` (${ui_state} state)` : '';
+      const bpLabel = breakpoint !== 'desktop' ? ` [${breakpoint}]` : '';
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Updated design for "${updatedLayer?.customName || updatedLayer?.name}"`,
+            message: `Updated design for "${updatedLayer?.customName || updatedLayer?.name}"${stateLabel}${bpLabel}`,
             layer_id,
             classes: updatedLayer?.classes,
             design: updatedLayer?.design,
