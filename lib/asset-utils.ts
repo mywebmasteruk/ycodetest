@@ -14,6 +14,7 @@ import { isAssetVariable, getAssetId } from '@/lib/variable-utils';
 import { applyComponentOverrides } from '@/lib/resolve-components';
 import { uuidToBase62, mimeToExtension } from '@/lib/convertion-utils';
 import { sanitizeSlug } from '@/lib/page-utils';
+import { isValidUUID } from '@/lib/utils';
 
 // Re-export constants for backward compatibility
 export { ASSET_CATEGORIES, ALLOWED_MIME_TYPES, DEFAULT_ASSETS, getAcceptString };
@@ -383,10 +384,17 @@ export function collectLayerAssetIds(
 ): Set<string> {
   const assetIds = new Set<string>();
 
+  const addAssetId = (id: unknown) => {
+    if (typeof id !== 'string' || !id) return;
+    if (isValidUUID(id)) {
+      assetIds.add(id);
+    }
+  };
+
   const addAssetVar = (v: any) => {
     if (isAssetVariable(v)) {
       const id = getAssetId(v);
-      if (id) assetIds.add(id);
+      addAssetId(id);
     }
   };
 
@@ -429,7 +437,7 @@ export function collectLayerAssetIds(
     if (overrides.link) {
       for (const val of Object.values(overrides.link)) {
         const v = val as any;
-        if (v?.asset?.id) assetIds.add(v.asset.id);
+        addAssetId(v?.asset?.id);
       }
     }
   };
@@ -464,8 +472,8 @@ export function collectLayerAssetIds(
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node.marks)) {
       for (const mark of node.marks) {
-        if (mark.type === 'richTextLink' && mark.attrs?.asset?.id) {
-          assetIds.add(mark.attrs.asset.id);
+        if (mark.type === 'richTextLink') {
+          addAssetId(mark.attrs?.asset?.id);
         }
       }
     }
@@ -500,13 +508,13 @@ export function collectLayerAssetIds(
 
     // Direct asset link
     const linkAssetId = layer.variables?.link?.asset?.id;
-    if (linkAssetId) assetIds.add(linkAssetId);
+    addAssetId(linkAssetId);
 
     // Lightbox file assets
     if (layer.settings?.lightbox?.files) {
       for (const fileId of layer.settings.lightbox.files) {
         if (fileId && !fileId.startsWith('http') && !fileId.startsWith('/')) {
-          assetIds.add(fileId);
+          addAssetId(fileId);
         }
       }
     }
@@ -532,10 +540,8 @@ export function collectLayerAssetIds(
 
     // Collection item values on resolved collection layers
     if (layer._collectionItemValues) {
-      const isUuid = (v: string) =>
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
       for (const value of Object.values(layer._collectionItemValues)) {
-        if (typeof value === 'string' && isUuid(value)) {
+        if (typeof value === 'string' && isValidUUID(value)) {
           assetIds.add(value);
         }
       }

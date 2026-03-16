@@ -418,7 +418,11 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
             // Not valid JSON, fall through
           }
         }
-        // Return empty doc for empty/invalid values
+        // Plain string (e.g. legacy dynamic_text content) — wrap in TipTap doc
+        if (typeof value === 'string' && value.trim()) {
+          return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: value }] }] };
+        }
+        // Truly empty or invalid — empty doc
         return { type: 'doc', content: [{ type: 'paragraph' }] };
       }
       // For non-formatting mode, parse string with inline variables

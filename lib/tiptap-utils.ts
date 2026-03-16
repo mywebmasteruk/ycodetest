@@ -233,11 +233,22 @@ export function hasComponentOrVariable(node: any): boolean {
   return false;
 }
 
-/** Extract the rich-text content value from a layer's text variable. */
+/** Extract the rich-text content value from a layer's text variable.
+ *  Always returns TipTap JSON so consumers (RichTextEditor with
+ *  withFormatting=true) never receive a raw string they can't render. */
 export function getRichTextValue(variables?: { text?: { type: string; data: { content: any } } }): any {
   const textVar = variables?.text;
   if (textVar?.type === 'dynamic_rich_text') return textVar.data.content;
-  if (textVar?.type === 'dynamic_text') return textVar.data.content;
+  if (textVar?.type === 'dynamic_text') {
+    const content = textVar.data.content;
+    if (typeof content === 'string') {
+      return {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: content ? [{ type: 'text', text: content }] : [] }],
+      };
+    }
+    return content;
+  }
   return { type: 'doc', content: [{ type: 'paragraph' }] };
 }
 

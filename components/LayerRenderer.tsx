@@ -1231,6 +1231,31 @@ const LayerItem: React.FC<{
     return filterDisabledSliderLayers(children, layer.settings);
   }, [layer.name, layer.settings, children]);
 
+  const subtreeHasInteractiveDescendants = useMemo(() => {
+    const interactiveTags = new Set(['a', 'button', 'input', 'select', 'textarea']);
+
+    const visit = (nodes?: Layer[]): boolean => {
+      if (!nodes?.length) return false;
+
+      return nodes.some((node) => {
+        if (!node) return false;
+
+        const childTag = node.settings?.tag || node.name || 'div';
+        const childHasLink = isValidLinkSettings(node.variables?.link);
+
+        return interactiveTags.has(childTag) || childHasLink || visit(node.children);
+      });
+    };
+
+    return visit(effectiveChildren);
+  }, [effectiveChildren]);
+
+  // Browsers repair invalid interactive nesting (<a><button>, <a><a>, etc.)
+  // differently during SSR, which can cause hydration mismatches.
+  if (!isEditMode && htmlTag === 'a' && subtreeHasInteractiveDescendants) {
+    htmlTag = 'div';
+  }
+
   // Use sortable for drag and drop
   const {
     attributes,
@@ -2729,7 +2754,11 @@ const LayerItem: React.FC<{
   // Skip for buttons — they render as <a> directly (see isButtonWithLink)
   // Skip for <a> layers — they already render as <a> and nesting <a> inside <a> is invalid HTML
   const linkSettings = layer.variables?.link;
-  const shouldWrapWithLink = !isEditMode && !isButtonWithLink && htmlTag !== 'a' && isValidLinkSettings(linkSettings);
+  const shouldWrapWithLink = !isEditMode
+    && !isButtonWithLink
+    && htmlTag !== 'a'
+    && !subtreeHasInteractiveDescendants
+    && isValidLinkSettings(linkSettings);
 
   if (shouldWrapWithLink && linkSettings) {
     // Build link context for layer-level link resolution
