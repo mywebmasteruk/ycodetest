@@ -12,10 +12,68 @@ import { buildCustomFontsCss, buildFontClassesCss, getGoogleFontLinks } from '@/
 import { collectLayerAssetIds, getAssetProxyUrl } from '@/lib/asset-utils';
 import { getAllPages } from '@/lib/repositories/pageRepository';
 import { getAllPageFolders } from '@/lib/repositories/pageFolderRepository';
-import { getItemWithValues } from '@/lib/repositories/collectionItemRepository';
+import { getItemWithValues, getItemsWithValues } from '@/lib/repositories/collectionItemRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
+import { REF_PAGE_PREFIX, REF_COLLECTION_PREFIX } from '@/lib/link-utils';
 import { getClassesString } from '@/lib/layer-utils';
 import type { Layer, Component, Page, CollectionItemWithValues, CollectionField, Locale, PageFolder } from '@/types';
+
+interface PageLinkRef { collection_item_id: string; page_id: string }
+
+/** Recursively collect all page link refs ({collection_item_id, page_id}) from a Tiptap JSON node */
+function collectTiptapPageLinks(node: any): PageLinkRef[] {
+  if (!node || typeof node !== 'object') return [];
+  const results: PageLinkRef[] = [];
+  if (node.marks && Array.isArray(node.marks)) {
+    for (const mark of node.marks) {
+      if (mark.type === 'richTextLink' && mark.attrs?.type === 'page'
+        && mark.attrs.page?.collection_item_id && mark.attrs.page?.id) {
+        results.push({ collection_item_id: mark.attrs.page.collection_item_id, page_id: mark.attrs.page.id });
+      }
+    }
+  }
+  if (node.content && Array.isArray(node.content)) {
+    for (const child of node.content) results.push(...collectTiptapPageLinks(child));
+  }
+  return results;
+}
+
+/**
+ * Walk a layer tree and return every page link ref from both layer-level links
+ * and richTextLink marks inside rich text variables.
+ */
+function collectLayerPageLinks(layers: Layer[]): PageLinkRef[] {
+  const results: PageLinkRef[] = [];
+  const scan = (layer: Layer) => {
+    if (layer.variables?.link?.type === 'page') {
+      const { collection_item_id, id: page_id } = layer.variables.link.page ?? {};
+      if (collection_item_id && page_id) results.push({ collection_item_id, page_id });
+    }
+    const textVar = layer.variables?.text as any;
+    if (textVar?.type === 'dynamic_rich_text' && textVar.data?.content) {
+      results.push(...collectTiptapPageLinks(textVar.data.content));
+    }
+    if (layer.children) layer.children.forEach(scan);
+  };
+  layers.forEach(scan);
+  return results;
+}
+
+/**
+ * Extract collection item slugs from resolved collection layers.
+ * These are populated by resolveCollectionLayers with `_collectionItemId` / `_collectionItemSlug`.
+ */
+function extractCollectionItemSlugs(layers: Layer[]): Record<string, string> {
+  const slugs: Record<string, string> = {};
+  const scan = (layer: Layer) => {
+    if (layer._collectionItemId && layer._collectionItemSlug) {
+      slugs[layer._collectionItemId] = layer._collectionItemSlug;
+    }
+    if (layer.children) layer.children.forEach(scan);
+  };
+  layers.forEach(scan);
+  return slugs;
+}
 
 /** Recursively check if any layer in the tree is a slider */
 function hasSliderLayers(layers: Layer[]): boolean {
@@ -107,44 +165,14 @@ export default async function PageRenderer({
   // Components are passed through for rich-text embedded component rendering in LayerRenderer.
   const resolvedLayers = layers || [];
 
-  // Scan layers for collection_item_ids referenced in link settings
-  // Excludes special keywords like 'current-page' and 'current-collection' which are resolved at runtime
-  const findCollectionItemIds = (layers: Layer[]): Set<string> => {
-    const itemIds = new Set<string>();
-    const specialKeywords = ['current-page', 'current-collection'];
-    const scan = (layer: Layer) => {
-      const itemId = layer.variables?.link?.page?.collection_item_id;
-      if (layer.variables?.link?.type === 'page' && itemId && !specialKeywords.includes(itemId)) {
-        itemIds.add(itemId);
-      }
-      if (layer.children) {
-        layer.children.forEach(scan);
-      }
-    };
-    layers.forEach(scan);
-    return itemIds;
-  };
-
-  // Extract collection item slugs from resolved collection layers
-  // These are populated by resolveCollectionLayers with `_collectionItemId` and `_collectionItemSlug`
-  const extractCollectionItemSlugs = (layers: Layer[]): Record<string, string> => {
-    const slugs: Record<string, string> = {};
-    const scan = (layer: Layer) => {
-      // Check for SSR-resolved collection item with ID and slug
-      const itemId = layer._collectionItemId;
-      const itemSlug = layer._collectionItemSlug;
-      if (itemId && itemSlug) {
-        slugs[itemId] = itemSlug;
-      }
-      if (layer.children) {
-        layer.children.forEach(scan);
-      }
-    };
-    layers.forEach(scan);
-    return slugs;
-  };
-
-  const referencedItemIds = findCollectionItemIds(resolvedLayers);
+  // Single tree traversal — derive both sets from the flat list
+  const allPageLinks = collectLayerPageLinks(resolvedLayers);
+  const DYNAMIC_KEYWORDS = new Set(['current-page', 'current-collection']);
+  const referencedItemIds = new Set(
+    allPageLinks
+      .filter(l => !DYNAMIC_KEYWORDS.has(l.collection_item_id) && !l.collection_item_id.startsWith('ref-'))
+      .map(l => l.collection_item_id)
+  );
 
   // Build collection item slugs map
   const collectionItemSlugs: Record<string, string> = {};
@@ -189,6 +217,26 @@ export default async function PageRenderer({
         const slugField = fields.find(f => f.key === 'slug');
 
         if (slugField && item.values[slugField.id]) {
+          collectionItemSlugs[item.id] = item.values[slugField.id];
+        }
+      }
+    }
+
+    // Fetch slugs for all items in collections targeted by ref-* links
+    const refTargetCollectionIds = new Set(
+      allPageLinks
+        .filter(l => l.collection_item_id.startsWith(REF_PAGE_PREFIX) || l.collection_item_id.startsWith(REF_COLLECTION_PREFIX))
+        .map(l => pages.find(p => p.id === l.page_id)?.settings?.cms?.collection_id)
+        .filter((id): id is string => !!id)
+    );
+    for (const collId of refTargetCollectionIds) {
+      const fields = await getFieldsByCollectionId(collId, false);
+      const slugField = fields.find(f => f.key === 'slug');
+      if (!slugField) continue;
+
+      const { items } = await getItemsWithValues(collId, false);
+      for (const item of items) {
+        if (item.values[slugField.id]) {
           collectionItemSlugs[item.id] = item.values[slugField.id];
         }
       }
@@ -353,7 +401,7 @@ export default async function PageRenderer({
         }}
       />
 
-      <div
+      <main
         id="ybody"
         className="contents"
         data-layer-id="body"
@@ -387,7 +435,7 @@ export default async function PageRenderer({
             isPublished={passwordProtection.isPublished}
           />
         )}
-      </div>
+      </main>
 
       {/* Initialize GSAP animations based on layer interactions */}
       <AnimationInitializer layers={resolvedLayers} />

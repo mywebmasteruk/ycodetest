@@ -16,7 +16,7 @@ import Document from '@tiptap/extension-document';
 import Text from '@tiptap/extension-text';
 import Paragraph from '@tiptap/extension-paragraph';
 import History from '@tiptap/extension-history';
-import { EditorState } from '@tiptap/pm/state';
+import { EditorState, NodeSelection } from '@tiptap/pm/state';
 import Placeholder from '@tiptap/extension-placeholder';
 import Bold from '@tiptap/extension-bold';
 import Italic from '@tiptap/extension-italic';
@@ -30,6 +30,7 @@ import ListItem from '@tiptap/extension-list-item';
 import Heading from '@tiptap/extension-heading';
 import Blockquote from '@tiptap/extension-blockquote';
 import Code from '@tiptap/extension-code';
+import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import { cn } from '@/lib/utils';
 import type { CollectionField, Collection } from '@/types';
 import {
@@ -61,8 +62,10 @@ import { RichTextComponent } from '@/lib/tiptap-extensions/rich-text-component';
 import { RichTextLink, getLinkSettingsFromMark } from '@/lib/tiptap-extensions/rich-text-link';
 import { RichTextImage } from '@/lib/tiptap-extensions/rich-text-image';
 import RichTextLinkPopover from './RichTextLinkPopover';
+import RichTextImagePopover from './RichTextImagePopover';
 import RichTextComponentPicker from './RichTextComponentPicker';
 import RichTextComponentBlock from './RichTextComponentBlock';
+import RichTextImageBlock from './RichTextImageBlock';
 import type { CollectionFieldType, Layer, LinkSettings, LinkType, Asset } from '@/types';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
 import { useEditorStore } from '@/stores/useEditorStore';
@@ -97,6 +100,8 @@ interface RichTextEditorProps {
   size?: 'xs' | 'sm';
   /** Link types to exclude from the link settings dropdown */
   excludedLinkTypes?: LinkType[];
+  /** Hide "Current page item" and "Reference field" options (e.g. when editing CMS item content) */
+  hidePageContextOptions?: boolean;
   /** Stretch editor to fill parent height (scrolls content instead of growing) */
   fullHeight?: boolean;
   /** Callback to open the full editor sheet (shown as expand button in toolbar) */
@@ -251,6 +256,68 @@ const RichTextComponentWithNodeView = RichTextComponent.extend({
 });
 
 /**
+ * RichTextImage with React node view for inline image editing.
+ * Renders the image with a selection ring; alt editing is handled by the toolbar popover.
+ */
+const RichTextImageWithNodeView = RichTextImage.extend({
+  addNodeView() {
+    return ({ node: initialNode, getPos, editor }) => {
+      const container = document.createElement('div');
+      container.contentEditable = 'false';
+
+      let currentNode = initialNode;
+      let isSelected = false;
+
+      const root = createRoot(container);
+
+      const renderBlock = () => {
+        root.render(
+          <RichTextImageBlock
+            src={currentNode.attrs.src}
+            alt={currentNode.attrs.alt || ''}
+            isSelected={isSelected}
+          />,
+        );
+      };
+
+      container.addEventListener('click', () => {
+        const pos = getPos();
+        if (typeof pos === 'number' && editor.isEditable) {
+          const tr = editor.state.tr.setSelection(
+            NodeSelection.create(editor.state.doc, pos)
+          );
+          editor.view.dispatch(tr);
+        }
+      });
+
+      queueMicrotask(renderBlock);
+
+      return {
+        dom: container,
+        stopEvent: () => true,
+        selectNode: () => {
+          isSelected = true;
+          renderBlock();
+        },
+        deselectNode: () => {
+          isSelected = false;
+          renderBlock();
+        },
+        update: (updatedNode) => {
+          if (updatedNode.type.name !== 'richTextImage') return false;
+          currentNode = updatedNode;
+          renderBlock();
+          return true;
+        },
+        destroy: () => {
+          setTimeout(() => root.unmount(), 0);
+        },
+      };
+    };
+  },
+});
+
+/**
  * Custom Tiptap mark for dynamic text styles
  * Preserves the style keys from canvas text editor without applying visual styling
  */
@@ -319,6 +386,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
   variant = 'compact',
   size = 'xs',
   excludedLinkTypes = [],
+  hidePageContextOptions = false,
   fullHeight = false,
   onExpandClick,
   allowedFieldTypes = RICH_TEXT_ONLY_FIELD_TYPES,
@@ -326,6 +394,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
   const isFullVariant = variant === 'full';
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+  const [imagePopoverOpen, setImagePopoverOpen] = useState(false);
   const [componentPickerOpen, setComponentPickerOpen] = useState(false);
   const openFileManager = useEditorStore((s) => s.openFileManager);
   // Track if update is coming from editor to prevent infinite loop
@@ -374,6 +443,8 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
         ListItem,
         Blockquote,
         Code,
+        RichTextImageWithNodeView,
+        HorizontalRule,
         RichTextImage,
       ];
 
@@ -634,6 +705,25 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
     }
   }, [value, fields, allFields, editor, withFormatting]);
 
+  // Auto-open image popover when an image node is selected
+  useEffect(() => {
+    if (!editor || !withFormatting) return;
+
+    const handleSelectionUpdate = () => {
+      const { selection } = editor.state;
+      const node = editor.state.doc.nodeAt(selection.from);
+      const isImage = node?.type.name === 'richTextImage';
+      if (isImage && !imagePopoverOpen) {
+        setImagePopoverOpen(true);
+      } else if (!isImage && imagePopoverOpen) {
+        setImagePopoverOpen(false);
+      }
+    };
+
+    editor.on('selectionUpdate', handleSelectionUpdate);
+    return () => { editor.off('selectionUpdate', handleSelectionUpdate); };
+  }, [editor, withFormatting, imagePopoverOpen]);
+
   // Internal function to add a field variable
   const addFieldVariableInternal = useCallback((variableData: FieldVariable) => {
     if (!editor) return;
@@ -758,7 +848,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
     <div className={cn('flex-1 rich-text-editor relative', isFullVariant && 'flex flex-col gap-2', fullHeight && 'min-h-0')}>
       {/* Formatting toolbar - Full variant (CMS style like original TiptapEditor) */}
       {withFormatting && showFormattingToolbar && isFullVariant && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sticky top-8 bg-background z-10 py-2 -my-2">
           <Select
             value={
               editor.isActive('heading', { level: 1 }) ? 'h1' :
@@ -811,6 +901,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
                 open={linkPopoverOpen}
                 onOpenChange={setLinkPopoverOpen}
                 excludedLinkTypes={excludedLinkTypes}
+                hidePageContextOptions={hidePageContextOptions}
                 trigger={
                   <ToggleGroupItem
                     value="link"
@@ -975,33 +1066,45 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
             variant="secondary"
             spacing={1}
           >
-            <ToggleGroupItem
-              value="image"
-              asChild
-            >
-              <button
-                type="button"
-                title="Insert Image"
-                disabled={disabled}
-                className="w-auto min-w-0 shrink-0"
-                onClick={() => {
-                  openFileManager(
-                    (asset: Asset) => {
-                      if (!editor || !asset.public_url) return;
-                      editor.chain().focus().setRichTextImage({
-                        src: asset.public_url,
-                        alt: asset.filename,
-                        assetId: asset.id,
-                      }).run();
-                    },
-                    undefined,
-                    'images'
-                  );
-                }}
-              >
-                <Icon name="image" className="size-3" />
-              </button>
-            </ToggleGroupItem>
+            <RichTextImagePopover
+              editor={editor}
+              open={imagePopoverOpen}
+              onOpenChange={setImagePopoverOpen}
+              disabled={disabled}
+              trigger={
+                <ToggleGroupItem
+                  value="image"
+                  data-state={editor.isActive('richTextImage') ? 'on' : 'off'}
+                  asChild
+                >
+                  <button
+                    type="button"
+                    title={editor.isActive('richTextImage') ? 'Image settings' : 'Insert Image'}
+                    disabled={disabled}
+                    className="w-auto min-w-0 shrink-0"
+                    onClick={(e) => {
+                      if (!editor.isActive('richTextImage')) {
+                        e.preventDefault();
+                        openFileManager(
+                          (asset: Asset) => {
+                            if (!editor || !asset.public_url) return;
+                            editor.chain().focus().setRichTextImage({
+                              src: asset.public_url,
+                              alt: asset.filename,
+                              assetId: asset.id,
+                            }).run();
+                          },
+                          undefined,
+                          'images'
+                        );
+                      }
+                    }}
+                  >
+                    <Icon name="image" className="size-3" />
+                  </button>
+                </ToggleGroupItem>
+              }
+            />
             <ToggleGroupItem
               value="component"
               asChild
@@ -1250,6 +1353,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
                 open={linkPopoverOpen}
                 onOpenChange={setLinkPopoverOpen}
                 excludedLinkTypes={excludedLinkTypes}
+                hidePageContextOptions={hidePageContextOptions}
                 trigger={
                   <Button
                     type="button"
@@ -1268,30 +1372,41 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
 
           {/* Insert Image / Component */}
           <div className="w-px h-4 bg-border mx-0.5" />
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="size-6!"
-            title="Insert Image"
+          <RichTextImagePopover
+            editor={editor}
+            open={imagePopoverOpen}
+            onOpenChange={setImagePopoverOpen}
             disabled={disabled}
-            onClick={() => {
-              openFileManager(
-                (asset: Asset) => {
-                  if (!editor || !asset.public_url) return;
-                  editor.chain().focus().setRichTextImage({
-                    src: asset.public_url,
-                    alt: asset.filename,
-                    assetId: asset.id,
-                  }).run();
-                },
-                undefined,
-                'images'
-              );
-            }}
-          >
-            <Icon name="image" className="size-3" />
-          </Button>
+            trigger={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className={cn('size-6!', editor.isActive('richTextImage') && 'bg-accent')}
+                disabled={disabled}
+                title={editor.isActive('richTextImage') ? 'Image settings' : 'Insert Image'}
+                onClick={(e) => {
+                  if (!editor.isActive('richTextImage')) {
+                    e.preventDefault();
+                    openFileManager(
+                      (asset: Asset) => {
+                        if (!editor || !asset.public_url) return;
+                        editor.chain().focus().setRichTextImage({
+                          src: asset.public_url,
+                          alt: asset.filename,
+                          assetId: asset.id,
+                        }).run();
+                      },
+                      undefined,
+                      'images'
+                    );
+                  }
+                }}
+              >
+                <Icon name="image" className="size-3" />
+              </Button>
+            }
+          />
           <Button
             type="button"
             variant="ghost"

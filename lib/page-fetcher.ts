@@ -19,7 +19,9 @@ export interface PaginationContext {
   defaultPage?: number;
 }
 
-import { resolveFieldLinkValue } from '@/lib/link-utils';
+import { resolveFieldLinkValue, resolveRefCollectionItemId, generateLinkHref } from '@/lib/link-utils';
+import type { LinkResolutionContext } from '@/lib/link-utils';
+import { getLinkSettingsFromMark } from '@/lib/tiptap-extensions/rich-text-link';
 import { SWIPER_CLASS_MAP, SWIPER_DATA_ATTR_MAP } from '@/lib/templates/utilities';
 import { resolveInlineVariables, resolveInlineVariablesFromData } from '@/lib/inline-variables';
 import { buildLayerTranslationKey, getTranslationByKey, hasValidTranslationValue, getTranslationValue } from '@/lib/localisation-utils';
@@ -3007,6 +3009,7 @@ function renderTiptapToHtml(
   content: any,
   textStyles?: Record<string, any>,
   renderComponentHtml?: RenderComponentHtmlFn,
+  linkContext?: LinkResolutionContext,
 ): string {
   if (!content || typeof content !== 'object') {
     return '';
@@ -3049,6 +3052,21 @@ function renderTiptapToHtml(
               text = `<a href="${escapeHtml(mark.attrs.href)}"${target}${rel}${classAttr}>${text}</a>`;
             }
             break;
+          case 'richTextLink': {
+            const rtLinkSettings = getLinkSettingsFromMark(mark.attrs || {});
+            if (rtLinkSettings.type && linkContext) {
+              const href = generateLinkHref(rtLinkSettings, linkContext);
+              if (href) {
+                const target = mark.attrs.target ? ` target="${escapeHtml(mark.attrs.target)}"` : '';
+                const rel = mark.attrs.rel
+                  ? ` rel="${escapeHtml(mark.attrs.rel)}"`
+                  : (mark.attrs.target === '_blank' ? ' rel="noopener noreferrer"' : '');
+                const download = mark.attrs.download ? ' download' : '';
+                text = `<a href="${escapeHtml(href)}"${target}${rel}${download}${classAttr}>${text}</a>`;
+              }
+            }
+            break;
+          }
           case 'dynamicStyle': {
             // Handle dynamic styles (headings, paragraphs, custom styles)
             const styleKeys: string[] = mark.attrs?.styleKeys || [];
@@ -3079,7 +3097,7 @@ function renderTiptapToHtml(
     const paragraphClass = mergedStyles?.paragraph?.classes || '';
     // Empty paragraphs use non-breaking space to preserve the empty line
     const innerHtml = content.content && content.content.length > 0
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
       : '\u00A0';
     // Wrap in span with paragraph styles for proper block display
     return `<span class="${escapeHtml(paragraphClass)}">${innerHtml}</span>`;
@@ -3093,7 +3111,7 @@ function renderTiptapToHtml(
     const headingClass = mergedStyles?.[styleKey]?.classes || '';
     // Empty headings use non-breaking space to preserve the empty line
     const innerHtml = content.content && content.content.length > 0
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
       : '\u00A0';
     // Use span to avoid nesting issues (h1 inside p is invalid)
     return `<span class="${escapeHtml(headingClass)}">${innerHtml}</span>`;
@@ -3101,7 +3119,7 @@ function renderTiptapToHtml(
 
   // Handle doc (root)
   if (content.type === 'doc' && Array.isArray(content.content)) {
-    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('');
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('');
   }
 
   // Handle bullet list
@@ -3109,7 +3127,7 @@ function renderTiptapToHtml(
     const listClass = textStyles?.bulletList?.classes || '';
     const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
     const items = content.content
-      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml)).join('')
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml, linkContext)).join('')
       : '';
     return `<ul${classAttr}>${items}</ul>`;
   }
@@ -3119,7 +3137,7 @@ function renderTiptapToHtml(
     const listClass = textStyles?.orderedList?.classes || '';
     const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
     const items = content.content
-      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml)).join('')
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml, linkContext)).join('')
       : '';
     return `<ol${classAttr}>${items}</ol>`;
   }
@@ -3127,7 +3145,7 @@ function renderTiptapToHtml(
   // Handle list item
   if (content.type === 'listItem') {
     const innerHtml = content.content
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
       : '';
     return `<li>${innerHtml}</li>`;
   }
@@ -3160,7 +3178,7 @@ function renderTiptapToHtml(
 
   // Fallback: recursively process content
   if (Array.isArray(content.content)) {
-    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('');
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('');
   }
 
   return '';
@@ -3572,11 +3590,19 @@ function layerToHtml(
               if (linkedPage.is_dynamic && linkSettings.page.collection_item_id && collectionItemSlugs) {
                 let itemSlug: string | undefined;
 
-                // Handle special "current" keywords - use the current collection item ID
+                // Handle special "current" keywords and reference field resolution
                 if (linkSettings.page.collection_item_id === 'current-page' ||
                     linkSettings.page.collection_item_id === 'current-collection') {
                   // Use the current collection item's slug (from effectiveCollectionItemId)
                   itemSlug = effectiveCollectionItemId ? collectionItemSlugs[effectiveCollectionItemId] : undefined;
+                } else if (linkSettings.page.collection_item_id.startsWith('ref-')) {
+                  // Resolve via reference field value from current item data
+                  const refItemId = resolveRefCollectionItemId(
+                    linkSettings.page.collection_item_id,
+                    pageCollectionItemData,
+                    effectiveCollectionItemData
+                  );
+                  itemSlug = refItemId ? collectionItemSlugs[refItemId] : undefined;
                 } else {
                   // Use the specific item slug
                   itemSlug = collectionItemSlugs[linkSettings.page.collection_item_id];
@@ -3793,7 +3819,19 @@ function layerToHtml(
             .join('');
         }
         : undefined;
-      textContent = renderTiptapToHtml(textVariable.data.content, layer.textStyles, componentRenderer);
+      const richTextLinkContext: LinkResolutionContext = {
+        pages,
+        folders,
+        collectionItemSlugs,
+        collectionItemId: effectiveCollectionItemId,
+        collectionItemData: effectiveCollectionItemData,
+        pageCollectionItemData,
+        locale,
+        translations,
+        anchorMap,
+        layerDataMap: effectiveLayerDataMap,
+      };
+      textContent = renderTiptapToHtml(textVariable.data.content, layer.textStyles, componentRenderer, richTextLinkContext);
       isRichText = true;
     }
   }

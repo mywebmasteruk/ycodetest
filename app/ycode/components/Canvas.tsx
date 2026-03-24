@@ -22,6 +22,7 @@ import { getCanvasIframeHtml } from '@/lib/canvas-utils';
 import { CanvasPortalProvider } from '@/lib/canvas-portal-context';
 import { cn } from '@/lib/utils';
 import { loadSwiperCss } from '@/lib/slider-utils';
+import { resolveReferenceFieldsSync } from '@/lib/collection-utils';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { useFontsStore } from '@/stores/useFontsStore';
 import { useColorVariablesStore } from '@/stores/useColorVariablesStore';
@@ -298,6 +299,19 @@ export default function Canvas({
     return serializeLayers(layers, components, editingComponentVariables);
   }, [layers, components, editingComponentVariables]);
 
+  // Enrich page collection item data with reference field dotted keys
+  // so variables like "refFieldId.targetFieldId" resolve on canvas
+  const enrichedPageCollectionItemData = useMemo(() => {
+    const values = pageCollectionItem?.values;
+    if (!values || !pageCollectionFields?.length) return values || null;
+    return resolveReferenceFieldsSync(
+      values,
+      pageCollectionFields,
+      collectionItems,
+      collectionFields
+    );
+  }, [pageCollectionItem?.values, pageCollectionFields, collectionItems, collectionFields]);
+
   // Collect layer IDs that should be hidden on canvas (display: hidden with on-load)
   const editorHiddenLayerIds = useMemo(() => {
     if (disableEditorHiddenLayers) return undefined;
@@ -472,7 +486,7 @@ export default function Canvas({
         hoveredLayerId={effectiveHoveredLayerId}
         pageId={pageId}
         pageCollectionItemId={pageCollectionItem?.id}
-        pageCollectionItemData={pageCollectionItem?.values || null}
+        pageCollectionItemData={enrichedPageCollectionItemData}
         onLayerClick={handleLayerClick}
         onLayerUpdate={onLayerUpdate}
         onLayerHover={handleLayerHover}
@@ -495,7 +509,8 @@ export default function Canvas({
     editingComponentId,
     editingComponentVariables,
     pageId,
-    pageCollectionItem,
+    pageCollectionItem?.id,
+    enrichedPageCollectionItemData,
     handleLayerClick,
     onLayerUpdate,
     handleLayerHover,

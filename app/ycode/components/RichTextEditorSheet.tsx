@@ -31,6 +31,8 @@ interface RichTextEditorSheetProps {
   fieldGroups?: FieldGroup[];
   allFields?: Record<string, CollectionField[]>;
   collections?: Collection[];
+  /** Hide "Current page item" and "Reference field" options */
+  hidePageContextOptions?: boolean;
 }
 
 export default function RichTextEditorSheet({
@@ -44,6 +46,7 @@ export default function RichTextEditorSheet({
   fieldGroups,
   allFields,
   collections,
+  hidePageContextOptions = false,
 }: RichTextEditorSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -83,6 +86,7 @@ export default function RichTextEditorSheet({
           variant="full"
           fullHeight
           allowedFieldTypes={RICH_TEXT_FIELD_TYPES}
+          hidePageContextOptions={hidePageContextOptions}
         />
       </SheetContent>
     </Sheet>

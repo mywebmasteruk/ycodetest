@@ -35,7 +35,7 @@ import { useAuthStore } from '@/stores/useAuthStore';
 // 6. Utils/lib
 import { cn } from '@/lib/utils';
 import { flattenTree, type FlattenedItem } from '@/lib/tree-utilities';
-import { canHaveChildren, getLayerIcon, getLayerName, getCollectionVariable, isTextContentLayer, isRichTextLayer, getRichTextSublayers, getTextStyleSublayers, canMoveLayer, updateLayerProps, filterDisabledSliderLayers, getLayerCmsFieldBinding, extractBlockText } from '@/lib/layer-utils';
+import { canHaveChildren, getLayerIcon, getLayerName, getCollectionVariable, isTextContentLayer, isRichTextLayer, hasRichTextContent, getRichTextSublayers, getTextStyleSublayers, canMoveLayer, updateLayerProps, filterDisabledSliderLayers, getLayerCmsFieldBinding, extractBlockText } from '@/lib/layer-utils';
 import { getBlockName } from '@/lib/templates/blocks';
 import { MULTI_ASSET_COLLECTION_ID } from '@/lib/collection-field-utils';
 import { hasStyleOverrides } from '@/lib/layer-style-utils';
@@ -252,7 +252,7 @@ const LayerRow = React.memo(function LayerRow({
   // Component instances should not show children in the tree (unless editing master)
   // Children can only be edited via "Edit master component"
   const shouldHideChildren = isComponentInstance && !editingComponentId;
-  const hasContentSublayers = isRichTextLayer(node.layer) && getRichTextSublayers(node.layer).length > 0;
+  const hasContentSublayers = hasRichTextContent(node.layer);
   const hasStyleSublayers = isTextContentLayer(node.layer) && getTextStyleSublayers(node.layer).length > 0;
   const hasSublayers = hasContentSublayers || hasStyleSublayers;
   const effectiveHasChildren = (hasChildren && !shouldHideChildren) || hasSublayers;
@@ -1883,7 +1883,7 @@ export default function LayersTree({
         hasVisibleChildren = node.canHaveChildren && !collapsedIds.has(node.id);
       } else {
         // Real layer nodes: check actual children and sublayer presence
-        const hasAnySublayers = (isRichTextLayer(node.layer) && getRichTextSublayers(node.layer).length > 0)
+        const hasAnySublayers = hasRichTextContent(node.layer)
           || (isTextContentLayer(node.layer) && getTextStyleSublayers(node.layer).length > 0);
         hasVisibleChildren = (!collapsedIds.has(node.id)) && (
           !!(node.layer.children && node.layer.children.length > 0) || hasAnySublayers

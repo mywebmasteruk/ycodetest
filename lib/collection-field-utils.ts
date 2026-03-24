@@ -570,27 +570,63 @@ export function isVirtualAssetField(fieldId: string): boolean {
 }
 
 /**
+ * Checks recursively whether a reference field has at least one sub-field
+ * matching the allowed types (directly or via nested references).
+ */
+function referenceHasMatchingSubFields(
+  field: CollectionField,
+  allowedTypes: CollectionFieldType[],
+  allFields: Record<string, CollectionField[]>,
+  visited: Set<string> = new Set(),
+): boolean {
+  if (!field.reference_collection_id) return false;
+  if (visited.has(field.reference_collection_id)) return false;
+  visited.add(field.reference_collection_id);
+
+  const subFields = allFields[field.reference_collection_id] || [];
+  return subFields.some(f => {
+    if (f.type === 'multi_reference') return false;
+    if (allowedTypes.includes(f.type as CollectionFieldType)) return true;
+    if (f.type === 'reference') return referenceHasMatchingSubFields(f, allowedTypes, allFields, visited);
+    return false;
+  });
+}
+
+/**
  * Filter field groups to only include fields of specified types.
  * Returns empty array if no matching fields exist.
- * When options.excludeMultipleAsset is true, also excludes fields with multiple assets.
+ * - When options.excludeMultipleAsset is true, also excludes fields with multiple assets.
+ * - When options.allFields is provided, reference fields are only kept if their referenced
+ *   collection contains at least one field matching the allowed types (checked recursively).
  */
 export function filterFieldGroupsByType(
   fieldGroups: FieldGroup[] | undefined,
   allowedTypes: CollectionFieldType[],
-  options?: { excludeMultipleAsset?: boolean }
+  options?: { excludeMultipleAsset?: boolean; allFields?: Record<string, CollectionField[]> }
 ): FieldGroup[] {
   if (!fieldGroups || fieldGroups.length === 0) return [];
 
   return fieldGroups
-    .map(group => ({
-      ...group,
-      fields: group.fields.filter(field => {
-        if (field.type === 'reference' && field.reference_collection_id) return true;
+    .map(group => {
+      const fields = group.fields.filter(field => {
+        if (field.type === 'reference' && field.reference_collection_id) {
+          if (options?.allFields) {
+            return referenceHasMatchingSubFields(field, allowedTypes, options.allFields);
+          }
+          return true;
+        }
         if (!allowedTypes.includes(field.type)) return false;
         if (options?.excludeMultipleAsset && isMultipleAssetField(field)) return false;
         return true;
-      }),
-    }))
+      });
+      // References always appear after regular fields
+      fields.sort((a, b) => {
+        const aIsRef = a.type === 'reference' ? 1 : 0;
+        const bIsRef = b.type === 'reference' ? 1 : 0;
+        return aIsRef - bIsRef;
+      });
+      return { ...group, fields };
+    })
     .filter(group => group.fields.length > 0);
 }
 
@@ -599,6 +635,42 @@ export function filterFieldGroupsByType(
  */
 export function flattenFieldGroups(fieldGroups: FieldGroup[] | undefined): CollectionField[] {
   return fieldGroups?.flatMap(g => g.fields) || [];
+}
+
+/** Prefix for reference-field-based collection item resolution (page source) */
+export const REF_PAGE_PREFIX = 'ref-page:';
+/** Prefix for reference-field-based collection item resolution (collection source) */
+export const REF_COLLECTION_PREFIX = 'ref-collection:';
+
+/** A resolved option for a reference field pointing to a specific CMS page collection. */
+export interface ReferenceItemOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Build select options for reference fields that point to a given target collection.
+ * Used in link settings dropdowns to offer "Category - Reference field" style options.
+ */
+export function buildReferenceItemOptions(
+  isDynamicPage: boolean,
+  targetPageCollectionId: string | null,
+  fieldGroups: FieldGroup[] | undefined
+): ReferenceItemOption[] {
+  if (!isDynamicPage || !targetPageCollectionId || !fieldGroups) return [];
+  const options: ReferenceItemOption[] = [];
+  for (const group of fieldGroups) {
+    const prefix = group.source === 'page' ? REF_PAGE_PREFIX : REF_COLLECTION_PREFIX;
+    for (const field of group.fields) {
+      if (field.type === 'reference' && field.reference_collection_id === targetPageCollectionId) {
+        options.push({
+          value: `${prefix}${field.id}`,
+          label: `${field.name} - Reference field`,
+        });
+      }
+    }
+  }
+  return options;
 }
 
 /**

@@ -194,6 +194,29 @@ export function hasLinkInTree(layer: Layer): boolean {
   return false;
 }
 
+export { REF_PAGE_PREFIX, REF_COLLECTION_PREFIX } from '@/lib/collection-field-utils';
+import { REF_PAGE_PREFIX, REF_COLLECTION_PREFIX } from '@/lib/collection-field-utils';
+
+/**
+ * Resolve a ref-* collection_item_id to the actual referenced item ID
+ * by looking up the reference field value in the current item data.
+ */
+export function resolveRefCollectionItemId(
+  collectionItemId: string,
+  pageCollectionItemData?: Record<string, string>,
+  collectionItemData?: Record<string, string>
+): string | undefined {
+  if (collectionItemId.startsWith(REF_PAGE_PREFIX)) {
+    const fieldId = collectionItemId.slice(REF_PAGE_PREFIX.length);
+    return pageCollectionItemData?.[fieldId];
+  }
+  if (collectionItemId.startsWith(REF_COLLECTION_PREFIX)) {
+    const fieldId = collectionItemId.slice(REF_COLLECTION_PREFIX.length);
+    return collectionItemData?.[fieldId];
+  }
+  return undefined;
+}
+
 /**
  * Context for resolving links (page, asset, field types)
  */
@@ -436,13 +459,21 @@ export function generateLinkHref(
           if (page.is_dynamic && linkSettings.page.collection_item_id && collectionItemSlugs) {
             let itemSlug: string | undefined;
 
-            // Handle special "current" keywords
+            // Handle special "current" keywords and reference field resolution
             if (linkSettings.page.collection_item_id === 'current-page') {
               // Use the page's collection item (for dynamic pages)
               itemSlug = pageCollectionItemId ? collectionItemSlugs[pageCollectionItemId] : undefined;
             } else if (linkSettings.page.collection_item_id === 'current-collection') {
               // Use the current collection layer's item
               itemSlug = collectionItemId ? collectionItemSlugs[collectionItemId] : undefined;
+            } else if (linkSettings.page.collection_item_id.startsWith('ref-')) {
+              // Resolve via reference field value from current item data
+              const refItemId = resolveRefCollectionItemId(
+                linkSettings.page.collection_item_id,
+                pageCollectionItemData,
+                collectionItemData
+              );
+              itemSlug = refItemId ? collectionItemSlugs[refItemId] : undefined;
             } else {
               // Use the specific item slug
               itemSlug = collectionItemSlugs[linkSettings.page.collection_item_id];
@@ -532,4 +563,30 @@ export function looksLikePhone(value: string): boolean {
   const trimmed = value.trim();
   const digitCount = (trimmed.match(/\d/g) || []).length;
   return /^[\d\s\-()+.]*$/.test(trimmed) && digitCount >= 7;
+}
+
+export interface ResolvedLinkAttrs {
+  href: string;
+  target: string;
+  rel?: string;
+  download?: boolean;
+}
+
+/** Resolve link settings to HTML anchor attributes (href, target, rel, download) */
+export function resolveLinkAttrs(
+  linkSettings: LinkSettings,
+  context: LinkResolutionContext
+): ResolvedLinkAttrs | null {
+  const href = generateLinkHref(linkSettings, context);
+  if (!href) return null;
+
+  const target = linkSettings.target || '_self';
+  const rel = linkSettings.rel || (target === '_blank' ? 'noopener noreferrer' : undefined);
+
+  return {
+    href,
+    target,
+    ...(rel && { rel }),
+    ...(linkSettings.download && { download: linkSettings.download }),
+  };
 }

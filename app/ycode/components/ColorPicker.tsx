@@ -940,7 +940,7 @@ function SortableVariableItem({ variable, isActive, onSelect, onStartEdit, onDel
                 <Icon name="more" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[120px]">
+            <DropdownMenuContent align="end" className="min-w-30">
               <DropdownMenuItem onClick={() => onStartEdit(variable)}>
                 <Icon name="pencil" />
                 Edit
@@ -1360,20 +1360,24 @@ export default function ColorPicker({
     }
   };
 
+  /** Routes a color value through varEditState (edit/create) or directly to the parent onChange. */
+  const commitColorValue = (colorValue: string) => {
+    if (varEditState?.mode === 'edit' && varEditState.id) {
+      setVarEditState({ ...varEditState, color: colorValue });
+      setPreviewOverride({ id: varEditState.id, value: hexToRgba(colorValue) });
+    } else {
+      immediateOnChange(colorValue);
+      if (varEditState?.mode === 'create') {
+        setVarEditState({ ...varEditState, color: colorValue });
+      }
+    }
+  };
+
   // Solid color handlers
   const handleRgbaChange = (color: { r: number; g: number; b: number; a: number }) => {
     setRgbaColor(color);
     isInternalUpdate.current = true;
-    if (varEditState?.mode === 'edit' && varEditState.id) {
-      const colorValue = rgbaToHex(color);
-      setVarEditState({ ...varEditState, color: colorValue });
-      setPreviewOverride({ id: varEditState.id, value: hexToRgba(colorValue) });
-    } else {
-      immediateOnChange(rgbaToHex(color));
-      if (varEditState?.mode === 'create') {
-        setVarEditState({ ...varEditState, color: rgbaToHex(color) });
-      }
-    }
+    commitColorValue(rgbaToHex(color));
   };
 
   // EyeDropper handler for solid colors
@@ -1490,12 +1494,11 @@ export default function ColorPicker({
           // Preserve current opacity if user only typed hex without opacity
           const finalRgba = opacityStr ? parsed : { ...parsed, a: rgbaColor.a };
           setRgbaColor(finalRgba);
-          // Update HSV values when hex input changes
           const hsv = rgbToHsv(finalRgba.r, finalRgba.g, finalRgba.b);
           setHue(hsv.h);
           setSaturation(hsv.s);
           setHsvValue(hsv.v);
-          immediateOnChange(rgbaToHex(finalRgba));
+          commitColorValue(rgbaToHex(finalRgba));
         }
       }
     }
@@ -1528,29 +1531,18 @@ export default function ColorPicker({
         // Partial - don't auto-fill, just reset to current color
         // User can type the full hex value if they want
         setHexInputValue(getHexOnly(rgbaToHex(rgbaColor)));
-      } else if (hexDigits.length === 6) {
-        // Valid 6-digit hex
-        const parsed = parseColor(normalized);
-        const finalRgba = { ...parsed, a: rgbaColor.a };
-        setRgbaColor(finalRgba);
-        const hsv = rgbToHsv(finalRgba.r, finalRgba.g, finalRgba.b);
-        setHue(hsv.h);
-        setSaturation(hsv.s);
-        setHsvValue(hsv.v);
-        setHexInputValue(normalized);
-        immediateOnChange(rgbaToHex(finalRgba));
       } else {
-        // Too long - truncate to 6 digits
-        const truncated = '#' + hexDigits.slice(0, 6);
-        const parsed = parseColor(truncated);
+        // Valid 6-digit hex, or too long — truncate to 6 digits
+        const validHex = '#' + hexDigits.slice(0, 6);
+        const parsed = parseColor(validHex);
         const finalRgba = { ...parsed, a: rgbaColor.a };
         setRgbaColor(finalRgba);
         const hsv = rgbToHsv(finalRgba.r, finalRgba.g, finalRgba.b);
         setHue(hsv.h);
         setSaturation(hsv.s);
         setHsvValue(hsv.v);
-        setHexInputValue(truncated);
-        immediateOnChange(rgbaToHex(finalRgba));
+        setHexInputValue(validHex);
+        commitColorValue(rgbaToHex(finalRgba));
       }
     } else {
       // Invalid format - reset to current color
@@ -1945,7 +1937,7 @@ export default function ColorPicker({
       <PopoverTrigger asChild>
       {hasValue || imagePreviewUrl ? (
         <div className="flex items-center justify-start h-8 rounded-lg bg-input hover:bg-input/60 px-2.5 cursor-pointer">
-          <div className={cn('size-5 rounded-[6px] shrink-0 mr-2 -ml-1 relative overflow-hidden outline dark:outline-white/10 outline-offset-[-1px]', (isTransparent || imagePreviewUrl || isColorVariable) && 'overflow-hidden')}>
+          <div className={cn('size-5 rounded-[6px] shrink-0 mr-2 -ml-1 relative overflow-hidden outline dark:outline-white/10 -outline-offset-1', (isTransparent || imagePreviewUrl || isColorVariable) && 'overflow-hidden')}>
             {imagePreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -1975,7 +1967,7 @@ export default function ColorPicker({
             variant="input" size="sm"
             className="justify-start"
           >
-            <div className="size-5 rounded-[6px] shrink-0 -ml-1 relative overflow-hidden outline outline-current/10 outline-offset-[-1px]">
+            <div className="size-5 rounded-[6px] shrink-0 -ml-1 relative overflow-hidden outline outline-current/10 -outline-offset-1">
               <div className="absolute inset-0 opacity-15 bg-checkerboard bg-background z-10" />
             </div>
             <span className="dark:opacity-50">Add...</span>
