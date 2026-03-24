@@ -2,6 +2,55 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+// ── Multi-tenant subdomain resolution ───────────────────────────────────────
+
+const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp']);
+const TENANT_DOMAIN_SUFFIX = process.env.TENANT_DOMAIN_SUFFIX || '';
+
+const tenantCache = new Map<string, { id: string; slug: string; ts: number }>();
+const CACHE_TTL_MS = 60_000;
+
+async function lookupTenant(slug: string): Promise<{ id: string; slug: string } | null> {
+  const cached = tenantCache.get(slug);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { id: cached.id, slug: cached.slug };
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+
+  try {
+    const qs = new URLSearchParams({
+      slug: `eq.${slug}`,
+      status: 'eq.active',
+      select: 'id,slug',
+      limit: '1',
+    });
+    const res = await fetch(`${url}/rest/v1/tenant_registry?${qs}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) return null;
+    const rows = (await res.json()) as { id: string; slug: string }[];
+    if (!rows.length) return null;
+    tenantCache.set(slug, { ...rows[0], ts: Date.now() });
+    return rows[0];
+  } catch {
+    return null;
+  }
+}
+
+function extractSubdomain(host: string): string | null {
+  if (!TENANT_DOMAIN_SUFFIX) return null;
+  const lower = host.toLowerCase().replace(/:\d+$/, '');
+  if (!lower.endsWith(`.${TENANT_DOMAIN_SUFFIX}`)) return null;
+  const sub = lower.slice(0, -(TENANT_DOMAIN_SUFFIX.length + 1));
+  if (!sub || sub.includes('.') || RESERVED_SUBDOMAINS.has(sub)) return null;
+  return sub;
+}
+
+// ── Existing auth / routing logic ───────────────────────────────────────────
+
 /**
  * Public API routes that skip authentication.
  */
@@ -110,6 +159,18 @@ async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null>
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // ── Tenant subdomain resolution ──
+  const host = request.headers.get('host') || '';
+  const subdomain = extractSubdomain(host);
+  if (subdomain) {
+    const tenant = await lookupTenant(subdomain);
+    if (!tenant) {
+      return new NextResponse('Tenant not found', { status: 404 });
+    }
+    request.headers.set('x-tenant-id', tenant.id);
+    request.headers.set('x-tenant-slug', tenant.slug);
+  }
+
   // Protect API and preview routes with auth
   if (pathname.startsWith('/ycode/api') || pathname.startsWith('/ycode/preview')) {
     const authResponse = await verifyApiAuth(request);
@@ -137,8 +198,8 @@ export async function proxy(request: NextRequest) {
     return rewriteResponse;
   }
 
-  // Create response
-  const response = NextResponse.next();
+  // Create response, forwarding modified request headers (including x-tenant-id)
+  const response = NextResponse.next({ request });
 
   // Add pathname header for layout to determine dark mode
   response.headers.set('x-pathname', pathname);
