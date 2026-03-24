@@ -1,5 +1,5 @@
 import { cache } from 'react';
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders } from '@/lib/supabase-server';
 import { buildSlugPath, buildDynamicPageUrl, buildLocalizedSlugPath, buildLocalizedDynamicPageUrl, detectLocaleFromPath, matchPageWithTranslatedSlugs, matchDynamicPageWithTranslatedSlugs } from '@/lib/page-utils';
 import { getItemWithValues, getItemsWithValues, getItemIdsByFieldValue } from '@/lib/repositories/collectionItemRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
@@ -1765,6 +1765,16 @@ export async function resolveCollectionLayers(
                   pageCollectionCounts: {},
                 })
               );
+            }
+          }
+
+          // Defense-in-depth: tenant filter on resolved items
+          const _tenantId = await getTenantIdFromHeaders();
+          if (_tenantId && items.length > 0) {
+            const _fields = await getFieldsByCollectionId(collectionVariable.id, isPublished);
+            const _tidField = _fields.find(f => f.key === 'tenant_id');
+            if (_tidField) {
+              items = items.filter(item => item.values[_tidField.id] === _tenantId);
             }
           }
 

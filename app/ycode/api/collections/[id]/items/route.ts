@@ -217,6 +217,16 @@ export async function POST(
       valuesWithAutoFields[updatedAtField.id] = now;
     }
 
+    // Auto-stamp tenant fields when a tenant subdomain is active
+    const _tenantId = request.headers.get('x-tenant-id');
+    const _tenantSlug = request.headers.get('x-tenant-slug');
+    if (_tenantId) {
+      const tidField = fields.find(f => f.key === 'tenant_id');
+      const tslugField = fields.find(f => f.key === 'tenant_slug');
+      if (tidField) valuesWithAutoFields[tidField.id] = _tenantId;
+      if (tslugField && _tenantSlug) valuesWithAutoFields[tslugField.id] = _tenantSlug;
+    }
+
     if (valuesWithAutoFields && typeof valuesWithAutoFields === 'object') {
       await setValuesByFieldName(
         item.id,

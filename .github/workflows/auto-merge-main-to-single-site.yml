@@ -1,0 +1,27 @@
+name: Auto-merge main into single-site
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: single-site
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into single-site
+        run: |
+          git fetch origin main
+          git merge origin/main --no-edit
+
+      - name: Push
+        run: git push origin single-site

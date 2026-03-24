@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { headers } from 'next/headers';
 import { credentials } from './credentials';
 import { parseSupabaseConfig } from './supabase-config-parser';
 import type { SupabaseConfig, SupabaseCredentials } from '@/types';
@@ -105,13 +106,16 @@ export async function testSupabaseConnection(
 }
 
 /**
- * Get tenant ID from request headers.
- *
- * Opensource: always returns null (single-tenant, no tenant scoping needed).
- * Cloud overlay: overridden to read x-tenant-id header set by middleware.
+ * Get tenant ID from request headers set by the multi-tenant middleware.
+ * Returns null when no subdomain is active (admin / master site).
  */
 export async function getTenantIdFromHeaders(): Promise<string | null> {
-  return null;
+  try {
+    const h = await headers();
+    return h.get('x-tenant-id') || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

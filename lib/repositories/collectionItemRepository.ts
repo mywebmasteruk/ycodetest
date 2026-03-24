@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT } from '@/lib/supabase-constants';
 import type { CollectionItem, CollectionItemWithValues } from '@/types';
 import { randomUUID } from 'crypto';
@@ -129,6 +129,32 @@ export async function getItemsByCollectionId(
   // If no items are linked, return early
   if (filters?.itemIds && filters.itemIds.length === 0) {
     return { items: [], total: 0 };
+  }
+
+  // ── Tenant scoping: restrict to items owned by the current tenant ──
+  const _tenantId = await getTenantIdFromHeaders();
+  if (_tenantId) {
+    const fields = await getFieldsByCollectionId(collection_id, is_published);
+    const tidField = fields.find(f => f.key === 'tenant_id');
+    if (tidField) {
+      const { data: tenantRows } = await client
+        .from('collection_item_values')
+        .select('item_id')
+        .eq('field_id', tidField.id)
+        .eq('value', _tenantId)
+        .eq('is_published', is_published)
+        .is('deleted_at', null);
+
+      const tenantItemIds = tenantRows?.map(r => r.item_id) ?? [];
+      if (filters?.itemIds) {
+        filters.itemIds = filters.itemIds.filter(id => tenantItemIds.includes(id));
+      } else {
+        filters = { ...filters, itemIds: tenantItemIds };
+      }
+      if (filters.itemIds && filters.itemIds.length === 0) {
+        return { items: [], total: 0 };
+      }
+    }
   }
 
   // If search is provided, find matching item IDs from values table
