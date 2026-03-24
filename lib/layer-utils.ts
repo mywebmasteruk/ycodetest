@@ -565,6 +565,7 @@ const SUBLAYER_ICON_MAP: Record<string, string> = {
   blockquote: 'quote',
   richTextComponent: 'component',
   richTextImage: 'image',
+  horizontalRule: 'separator',
 };
 
 /**
@@ -579,6 +580,7 @@ export function contentBlockToStyleKey(block: { type: string; attrs?: Record<str
     case 'orderedList': return 'orderedList';
     case 'blockquote': return 'blockquote';
     case 'richTextImage': return 'richTextImage';
+    case 'horizontalRule': return 'horizontalRule';
     default: return null;
   }
 }
@@ -597,14 +599,19 @@ export function extractBlockText(block: any): string {
 
 /**
  * Recursively extract all unique inline mark types from a TipTap content block.
+ * Normalizes TipTap mark names to style keys (e.g., richTextLink → link).
  */
 function extractInlineMarks(block: any): string[] {
+  const MARK_NAME_MAP: Record<string, string> = {
+    richTextLink: 'link',
+  };
+
   const marks = new Set<string>();
 
   function traverse(node: any) {
     if (node.marks && Array.isArray(node.marks)) {
       node.marks.forEach((mark: any) => {
-        if (mark.type) marks.add(mark.type);
+        if (mark.type) marks.add(MARK_NAME_MAP[mark.type] || mark.type);
       });
     }
     if (node.content && Array.isArray(node.content)) {
@@ -677,7 +684,7 @@ function buildSublayersFromDoc(doc: any, layer: Layer): RichTextSublayer[] {
         richTextComponent: 'Component',
         richTextImage: 'Image',
         codeBlock: 'Code Block',
-        horizontalRule: 'Divider',
+        horizontalRule: 'Separator',
       };
 
       const textContent = extractBlockText(block).trim();
@@ -748,6 +755,7 @@ const STYLE_SUBLAYER_ICON_MAP: Record<string, string> = {
   listItem: 'text',
   blockquote: 'quote',
   richTextImage: 'image',
+  horizontalRule: 'separator',
 };
 
 /** Inline mark style keys shown for all text layers */
@@ -2729,7 +2737,7 @@ function resetLayerVariableBindings(variables: LayerVariables | undefined, ctx: 
 
   // --- Design color bindings ---
   if (updated.design) {
-    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'textDecorationColor'] as const;
+    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'outlineColor', 'textDecorationColor'] as const;
     let designChanged = false;
     const newDesign = { ...updated.design };
 
@@ -3159,7 +3167,7 @@ function stripPageSourceFromVariables(variables: LayerVariables): LayerVariables
 
   // Design color bindings
   if (updated.design) {
-    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'textDecorationColor'] as const;
+    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'outlineColor', 'textDecorationColor'] as const;
     let designChanged = false;
     const newDesign = { ...updated.design };
     for (const key of designKeys) {
@@ -3461,7 +3469,7 @@ function resetVariablesForCollectionLayer(variables: LayerVariables, collectionL
 
   // --- Design color bindings ---
   if (updated.design) {
-    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'textDecorationColor'] as const;
+    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'outlineColor', 'textDecorationColor'] as const;
     let designChanged = false;
     const newDesign = { ...updated.design };
 
@@ -3767,7 +3775,7 @@ function resetVariablesForDeletedField(variables: LayerVariables, deletedFieldId
 
   // --- Design color bindings ---
   if (updated.design) {
-    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'textDecorationColor'] as const;
+    const designKeys = ['backgroundColor', 'color', 'borderColor', 'divideColor', 'outlineColor', 'textDecorationColor'] as const;
     let designChanged = false;
     const newDesign = { ...updated.design };
 

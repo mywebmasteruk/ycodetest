@@ -569,6 +569,7 @@ export default function CollectionItemSheet({
                                 variant="full"
                                 withFormatting={true}
                                 excludedLinkTypes={['asset', 'field']}
+                                hidePageContextOptions={true}
                                 onExpandClick={() => setExpandedRichTextField(field.id)}
                               />
                               <RichTextEditorSheet
@@ -578,6 +579,7 @@ export default function CollectionItemSheet({
                                 value={formField.value || ''}
                                 onChange={formField.onChange}
                                 placeholder={field.default || `Enter ${field.name.toLowerCase()}...`}
+                                hidePageContextOptions={true}
                               />
                             </div>
                           ) : field.type === 'reference' && field.reference_collection_id ? (
