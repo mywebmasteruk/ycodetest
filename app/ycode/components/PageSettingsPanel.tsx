@@ -47,7 +47,7 @@ import { useEditorStore } from '@/stores/useEditorStore';
 import RichTextEditor from './RichTextEditor';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
-import { getFieldIcon, IMAGE_FIELD_TYPES, SIMPLE_TEXT_FIELD_TYPES } from '@/lib/collection-field-utils';
+import { getFieldIcon, IMAGE_FIELD_TYPES, RICH_TEXT_FIELD_TYPES } from '@/lib/collection-field-utils';
 
 export interface PageSettingsPanelHandle {
   checkUnsavedChanges: () => Promise<boolean>;
@@ -1473,7 +1473,7 @@ const PageSettingsPanel = React.forwardRef<PageSettingsPanelHandle, PageSettings
                           value={seoTitle}
                           onChange={setSeoTitle}
                           placeholder={name || 'Page title'}
-                          allowedFieldTypes={SIMPLE_TEXT_FIELD_TYPES}
+                          allowedFieldTypes={RICH_TEXT_FIELD_TYPES}
                           fieldGroups={(() => {
                             const activeCollectionId = collectionId || currentPage?.settings?.cms?.collection_id || '';
                             const pageFields = fields[activeCollectionId] || [];
@@ -1510,7 +1510,7 @@ const PageSettingsPanel = React.forwardRef<PageSettingsPanelHandle, PageSettings
                               ? 'Describe in more detail what error occurred on this page and why.'
                               : 'Describe your business and/or the content of this page.'
                           }
-                          allowedFieldTypes={SIMPLE_TEXT_FIELD_TYPES}
+                          allowedFieldTypes={RICH_TEXT_FIELD_TYPES}
                           fieldGroups={(() => {
                             const activeCollectionId = collectionId || currentPage?.settings?.cms?.collection_id || '';
                             const pageFields = fields[activeCollectionId] || [];
