@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT, SUPABASE_WRITE_BATCH_SIZE } from '@/lib/supabase-constants';
 import { cleanupOrphanedStorageFiles } from '@/lib/storage-utils';
 import { generateFontContentHash } from '@/lib/hash-utils';
@@ -8,6 +8,7 @@ import type { Font, CreateFontData, UpdateFontData } from '@/types';
  * Get all fonts (drafts only)
  */
 export async function getAllFonts(): Promise<Font[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -20,7 +21,7 @@ export async function getAllFonts(): Promise<Font[]> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  fontsQ = await scopeToTenantRow(fontsQ);
+  fontsQ = scopeToTenantRow(fontsQ, tid);
 
   const { data, error } = await fontsQ
     .order('created_at', { ascending: true })
@@ -35,6 +36,7 @@ export async function getAllFonts(): Promise<Font[]> {
  * Get all published fonts
  */
 export async function getPublishedFonts(): Promise<Font[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -47,7 +49,7 @@ export async function getPublishedFonts(): Promise<Font[]> {
     .eq('is_published', true)
     .is('deleted_at', null);
 
-  pubFontsQ = await scopeToTenantRow(pubFontsQ);
+  pubFontsQ = scopeToTenantRow(pubFontsQ, tid);
 
   const { data, error } = await pubFontsQ
     .order('created_at', { ascending: true })
@@ -62,6 +64,7 @@ export async function getPublishedFonts(): Promise<Font[]> {
  * Get a font by ID (draft)
  */
 export async function getFontById(id: string): Promise<Font | null> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -75,7 +78,7 @@ export async function getFontById(id: string): Promise<Font | null> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  fontByIdQ = await scopeToTenantRow(fontByIdQ);
+  fontByIdQ = scopeToTenantRow(fontByIdQ, tid);
 
   const { data, error } = await fontByIdQ.single();
 

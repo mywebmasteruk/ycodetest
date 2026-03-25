@@ -5,7 +5,7 @@
  * Supports draft/published workflow with content hash-based change detection
  */
 
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { LayerStyle, Layer } from '@/types';
 import { generateLayerStyleContentHash } from '../hash-utils';
 
@@ -48,13 +48,15 @@ export async function getAllStyles(isPublished: boolean = false): Promise<LayerS
     throw new Error('Failed to initialize Supabase client');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let lsQ = client
     .from('layer_styles')
     .select('*')
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  lsQ = await scopeToTenantRow(lsQ);
+  lsQ = scopeToTenantRow(lsQ, tid);
 
   const { data, error } = await lsQ.order('created_at', { ascending: false });
 
@@ -75,6 +77,8 @@ export async function getStyleById(id: string, isPublished: boolean = false): Pr
     throw new Error('Failed to initialize Supabase client');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let styleByIdQ = client
     .from('layer_styles')
     .select('*')
@@ -82,7 +86,7 @@ export async function getStyleById(id: string, isPublished: boolean = false): Pr
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  styleByIdQ = await scopeToTenantRow(styleByIdQ);
+  styleByIdQ = scopeToTenantRow(styleByIdQ, tid);
 
   const { data, error } = await styleByIdQ.single();
 
@@ -105,13 +109,15 @@ export async function getStyleByIdIncludingDeleted(id: string, isPublished: bool
     throw new Error('Failed to initialize Supabase client');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let styleInclDelQ = client
     .from('layer_styles')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished);
 
-  styleInclDelQ = await scopeToTenantRow(styleInclDelQ);
+  styleInclDelQ = scopeToTenantRow(styleInclDelQ, tid);
 
   const { data, error } = await styleInclDelQ.single();
 

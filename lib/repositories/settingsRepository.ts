@@ -4,7 +4,7 @@
  * Data access layer for application settings stored in the database
  */
 
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { Setting } from '@/types';
 
 /**
@@ -18,11 +18,13 @@ export async function getAllSettings(): Promise<Setting[]> {
     throw new Error('Failed to initialize Supabase client');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let settingsQ = client
     .from('settings')
     .select('*');
 
-  settingsQ = await scopeToTenantRow(settingsQ);
+  settingsQ = scopeToTenantRow(settingsQ, tid);
 
   const { data, error } = await settingsQ.order('key', { ascending: true });
 

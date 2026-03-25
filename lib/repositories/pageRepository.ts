@@ -4,7 +4,7 @@
  * Data access layer for page operations with Supabase
  */
 
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import { reorderSiblings } from '@/lib/repositories/pageFolderRepository';
 import type { Page, PageSettings } from '../../types';
 import { isHomepage } from '../page-utils';
@@ -81,6 +81,7 @@ function normalizePageFolderId(folderId?: string | null): string | null {
  * const publishedPages = await getAllPages({ is_published: true });
  */
 export async function getAllPages(filters?: QueryFilters): Promise<Page[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -100,7 +101,7 @@ export async function getAllPages(filters?: QueryFilters): Promise<Page[]> {
     });
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query.order('order', { ascending: true });
 
@@ -118,6 +119,7 @@ export async function getAllPages(filters?: QueryFilters): Promise<Page[]> {
  * @param isPublished - Get draft (false) or published (true) version. Defaults to false (draft).
  */
 export async function getPageById(id: string, isPublished: boolean = false): Promise<Page | null> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -131,7 +133,7 @@ export async function getPageById(id: string, isPublished: boolean = false): Pro
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  pageByIdQuery = await scopeToTenantRow(pageByIdQuery);
+  pageByIdQuery = scopeToTenantRow(pageByIdQuery, tid);
 
   const { data, error } = await pageByIdQuery.single();
 
@@ -151,6 +153,7 @@ export async function getPageById(id: string, isPublished: boolean = false): Pro
  * @param filters - Optional additional filters
  */
 export async function getPageBySlug(slug: string, filters?: QueryFilters): Promise<Page | null> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -170,7 +173,7 @@ export async function getPageBySlug(slug: string, filters?: QueryFilters): Promi
     });
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query.single();
 
@@ -702,6 +705,7 @@ export async function forceDeletePage(id: string): Promise<void> {
  * @param includeDeleted - If true, includes soft-deleted drafts
  */
 export async function getAllDraftPages(includeDeleted = false): Promise<Page[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -718,7 +722,7 @@ export async function getAllDraftPages(includeDeleted = false): Promise<Page[]> 
     query = query.is('deleted_at', null);
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query.order('created_at', { ascending: false });
 
@@ -734,6 +738,7 @@ export async function getAllDraftPages(includeDeleted = false): Promise<Page[]> 
  * Used for batch publishing optimization
  */
 export async function getPublishedPagesByIds(ids: string[]): Promise<Page[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -751,7 +756,7 @@ export async function getPublishedPagesByIds(ids: string[]): Promise<Page[]> {
     .eq('is_published', true)
     .is('deleted_at', null);
 
-  pubByIdsQuery = await scopeToTenantRow(pubByIdsQuery);
+  pubByIdsQuery = scopeToTenantRow(pubByIdsQuery, tid);
 
   const { data, error } = await pubByIdsQuery;
 
@@ -767,6 +772,7 @@ export async function getPublishedPagesByIds(ids: string[]): Promise<Page[]> {
  * @param folderId - Folder ID (null for root/unorganized pages)
  */
 export async function getPagesByFolder(folderId: string | null): Promise<Page[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -783,7 +789,7 @@ export async function getPagesByFolder(folderId: string | null): Promise<Page[]>
     ? query.is('page_folder_id', null)
     : query.eq('page_folder_id', folderId);
 
-  const scopedFolder = await scopeToTenantRow(finalQuery);
+  const scopedFolder = scopeToTenantRow(finalQuery, tid);
 
   const { data, error } = await scopedFolder.order('created_at', { ascending: false });
 

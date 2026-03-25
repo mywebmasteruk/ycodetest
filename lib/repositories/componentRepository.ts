@@ -6,7 +6,7 @@
  * Supports draft/published workflow with content hash-based change detection
  */
 
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { Component, Layer } from '@/types';
 import { generateComponentContentHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
@@ -25,6 +25,7 @@ export interface CreateComponentData {
  * Get all components (draft by default, excludes soft deleted)
  */
 export async function getAllComponents(isPublished: boolean = false): Promise<Component[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
@@ -36,7 +37,7 @@ export async function getAllComponents(isPublished: boolean = false): Promise<Co
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  compQuery = await scopeToTenantRow(compQuery);
+  compQuery = scopeToTenantRow(compQuery, tid);
 
   const { data, error } = await compQuery.order('created_at', { ascending: false });
 
@@ -52,6 +53,7 @@ export async function getAllComponents(isPublished: boolean = false): Promise<Co
  * With composite primary key, we need to specify is_published to get a single row
  */
 export async function getComponentById(id: string, isPublished: boolean = false): Promise<Component | null> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
@@ -64,7 +66,7 @@ export async function getComponentById(id: string, isPublished: boolean = false)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  oneComp = await scopeToTenantRow(oneComp);
+  oneComp = scopeToTenantRow(oneComp, tid);
 
   const { data, error } = await oneComp.single();
 
@@ -86,6 +88,7 @@ export async function getComponentsByIds(
   ids: string[],
   isPublished: boolean = false
 ): Promise<Record<string, Component>> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
@@ -102,7 +105,7 @@ export async function getComponentsByIds(
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  byIdsQ = await scopeToTenantRow(byIdsQ);
+  byIdsQ = scopeToTenantRow(byIdsQ, tid);
 
   const { data, error } = await byIdsQ;
 

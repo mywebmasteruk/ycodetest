@@ -205,10 +205,9 @@ export async function getTenantIdFromHeaders(): Promise<string | null> {
  * Typed as `any` so Supabase PostgrestFilterBuilder chains keep inferring correctly.
  */
  
-export async function scopeToTenantRow(query: any): Promise<any> {
-  const tid = await getTenantIdFromHeaders();
-  if (!tid) return query;
-  return query.eq('tenant_id', tid);
+export function scopeToTenantRow(query: any, tenantId: string | null): any {
+  if (!tenantId) return query;
+  return query.eq('tenant_id', tenantId);
 }
 
 /**

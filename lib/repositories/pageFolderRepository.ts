@@ -4,7 +4,7 @@
  * Data access layer for page folder operations with Supabase
  */
 
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { PageFolder } from '../../types';
 import { incrementSiblingOrders } from '../services/pageService';
 
@@ -56,6 +56,8 @@ export async function getAllPageFolders(filters?: QueryFilters): Promise<PageFol
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let query = client
     .from('page_folders')
     .select('*')
@@ -68,7 +70,7 @@ export async function getAllPageFolders(filters?: QueryFilters): Promise<PageFol
     });
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query.order('order', { ascending: true });
 
@@ -91,6 +93,8 @@ export async function getPageFolderById(id: string, isPublished = false): Promis
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let pfQ = client
     .from('page_folders')
     .select('*')
@@ -98,7 +102,7 @@ export async function getPageFolderById(id: string, isPublished = false): Promis
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  pfQ = await scopeToTenantRow(pfQ);
+  pfQ = scopeToTenantRow(pfQ, tid);
 
   const { data, error } = await pfQ.single();
 

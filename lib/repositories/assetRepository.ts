@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT, SUPABASE_WRITE_BATCH_SIZE } from '@/lib/supabase-constants';
 import { STORAGE_BUCKET, STORAGE_FOLDERS } from '@/lib/asset-constants';
 import { cleanupOrphanedStorageFiles } from '@/lib/storage-utils';
@@ -127,6 +127,8 @@ export async function getAllAssets(folderId?: string | null): Promise<Asset[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Supabase has a default limit of 1000 rows, so we need to paginate for large datasets
   const PAGE_SIZE = 1000;
   const allAssets: Asset[] = [];
@@ -151,7 +153,7 @@ export async function getAllAssets(folderId?: string | null): Promise<Asset[]> {
       }
     }
 
-    query = await scopeToTenantRow(query);
+    query = scopeToTenantRow(query, tid);
 
     const { data, error } = await query;
 

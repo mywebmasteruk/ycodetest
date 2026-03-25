@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { PageLayers, Layer } from '../../types';
 import { generatePageLayersHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
@@ -208,6 +208,7 @@ export async function upsertDraftLayers(
  * Used for loading all drafts at once in the editor
  */
 export async function getAllDraftLayers(): Promise<PageLayers[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -220,7 +221,7 @@ export async function getAllDraftLayers(): Promise<PageLayers[]> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  layersQ = await scopeToTenantRow(layersQ);
+  layersQ = scopeToTenantRow(layersQ, tid);
 
   const { data, error } = await layersQ.order('created_at', { ascending: false });
 
@@ -236,6 +237,7 @@ export async function getAllDraftLayers(): Promise<PageLayers[]> {
  * Used for batch publishing optimization
  */
 export async function getDraftLayersForPages(pageIds: string[]): Promise<PageLayers[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -253,7 +255,7 @@ export async function getDraftLayersForPages(pageIds: string[]): Promise<PageLay
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  dlQ = await scopeToTenantRow(dlQ);
+  dlQ = scopeToTenantRow(dlQ, tid);
 
   const { data, error } = await dlQ.order('created_at', { ascending: false });
 
@@ -269,6 +271,7 @@ export async function getDraftLayersForPages(pageIds: string[]): Promise<PageLay
  * Used for batch publishing optimization
  */
 export async function getPublishedLayersByIds(ids: string[]): Promise<PageLayers[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
 
   if (!client) {
@@ -286,7 +289,7 @@ export async function getPublishedLayersByIds(ids: string[]): Promise<PageLayers
     .eq('is_published', true)
     .is('deleted_at', null);
 
-  pubLQ = await scopeToTenantRow(pubLQ);
+  pubLQ = scopeToTenantRow(pubLQ, tid);
 
   const { data, error } = await pubLQ;
 

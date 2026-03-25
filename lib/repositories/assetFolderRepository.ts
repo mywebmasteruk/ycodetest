@@ -19,13 +19,15 @@ export async function getAllAssetFolders(isPublished = false): Promise<AssetFold
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let afQ = client
     .from('asset_folders')
     .select('*')
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  afQ = await scopeToTenantRow(afQ);
+  afQ = scopeToTenantRow(afQ, tid);
 
   const { data, error } = await afQ.order('order', { ascending: true });
 
@@ -48,6 +50,8 @@ export async function getAssetFolderById(id: string, isPublished = false): Promi
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let byIdQ = client
     .from('asset_folders')
     .select('*')
@@ -55,7 +59,7 @@ export async function getAssetFolderById(id: string, isPublished = false): Promi
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  byIdQ = await scopeToTenantRow(byIdQ);
+  byIdQ = scopeToTenantRow(byIdQ, tid);
 
   const { data, error } = await byIdQ.single();
 
@@ -84,13 +88,15 @@ export async function getChildFolders(
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let query = client
     .from('asset_folders')
     .select('*')
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   // Handle null vs non-null parent_id
   const finalQuery = parentId === null
@@ -148,6 +154,8 @@ export async function updateAssetFolder(id: string, updates: UpdateAssetFolderDa
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let updQ = client
     .from('asset_folders')
     .update({
@@ -157,7 +165,7 @@ export async function updateAssetFolder(id: string, updates: UpdateAssetFolderDa
     .eq('id', id)
     .eq('is_published', false);
 
-  updQ = await scopeToTenantRow(updQ);
+  updQ = scopeToTenantRow(updQ, tid);
 
   const { data, error } = await updQ.select().single();
 
@@ -178,6 +186,8 @@ async function getDescendantFolderIds(folderId: string): Promise<string[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Fetch all non-deleted draft folders once
   let descQ = client
     .from('asset_folders')
@@ -185,7 +195,7 @@ async function getDescendantFolderIds(folderId: string): Promise<string[]> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  descQ = await scopeToTenantRow(descQ);
+  descQ = scopeToTenantRow(descQ, tid);
 
   const { data: allFolders, error } = await descQ;
 
@@ -232,6 +242,8 @@ export async function deleteAssetFolder(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   const deletedAt = new Date().toISOString();
 
   // Get the draft folder before deletion
@@ -252,7 +264,7 @@ export async function deleteAssetFolder(id: string): Promise<void> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  assetsDelQ = await scopeToTenantRow(assetsDelQ);
+  assetsDelQ = scopeToTenantRow(assetsDelQ, tid);
 
   const { error: assetsError } = await assetsDelQ;
 
@@ -268,7 +280,7 @@ export async function deleteAssetFolder(id: string): Promise<void> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  foldersDelQ = await scopeToTenantRow(foldersDelQ);
+  foldersDelQ = scopeToTenantRow(foldersDelQ, tid);
 
   const { error: foldersError } = await foldersDelQ;
 
@@ -313,6 +325,8 @@ export async function getUnpublishedAssetFolders(): Promise<AssetFolder[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Fetch all draft folders
   let draftQ = client
     .from('asset_folders')
@@ -320,7 +334,7 @@ export async function getUnpublishedAssetFolders(): Promise<AssetFolder[]> {
     .eq('is_published', false)
     .is('deleted_at', null);
 
-  draftQ = await scopeToTenantRow(draftQ);
+  draftQ = scopeToTenantRow(draftQ, tid);
 
   const { data: draftFolders, error } = await draftQ
     .order('depth', { ascending: true })
@@ -342,7 +356,7 @@ export async function getUnpublishedAssetFolders(): Promise<AssetFolder[]> {
     .in('id', draftIds)
     .eq('is_published', true);
 
-  pubQ = await scopeToTenantRow(pubQ);
+  pubQ = scopeToTenantRow(pubQ, tid);
 
   const { data: publishedFolders, error: publishedError } = await pubQ;
 
@@ -373,6 +387,8 @@ export async function getDeletedDraftAssetFolders(): Promise<AssetFolder[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   const allFolders: AssetFolder[] = [];
   let offset = 0;
 
@@ -383,7 +399,7 @@ export async function getDeletedDraftAssetFolders(): Promise<AssetFolder[]> {
       .eq('is_published', false)
       .not('deleted_at', 'is', null);
 
-    delQ = await scopeToTenantRow(delQ);
+    delQ = scopeToTenantRow(delQ, tid);
 
     const { data, error } = await delQ.range(offset, offset + SUPABASE_QUERY_LIMIT - 1);
 
@@ -426,6 +442,8 @@ export async function publishAssetFolders(folderIds: string[]): Promise<{ count:
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   const draftFolders: AssetFolder[] = [];
 
   // Fetch draft folders in batches
@@ -438,7 +456,7 @@ export async function publishAssetFolders(folderIds: string[]): Promise<{ count:
       .eq('is_published', false)
       .is('deleted_at', null);
 
-    pubDraftQ = await scopeToTenantRow(pubDraftQ);
+    pubDraftQ = scopeToTenantRow(pubDraftQ, tid);
 
     const { data, error: fetchError } = await pubDraftQ;
 
@@ -468,7 +486,7 @@ export async function publishAssetFolders(folderIds: string[]): Promise<{ count:
       .in('id', batchIds)
       .eq('is_published', true);
 
-    pubExistQ = await scopeToTenantRow(pubExistQ);
+    pubExistQ = scopeToTenantRow(pubExistQ, tid);
 
     const { data: existingPublished } = await pubExistQ;
 
@@ -478,7 +496,6 @@ export async function publishAssetFolders(folderIds: string[]): Promise<{ count:
   // Only publish folders that are new or changed
   const recordsToUpsert: any[] = [];
   const now = new Date().toISOString();
-  const tenantIdForPublish = await getTenantIdFromHeaders();
 
   for (const draft of draftFolders) {
     const existing = publishedById.get(draft.id);
@@ -498,7 +515,7 @@ export async function publishAssetFolders(folderIds: string[]): Promise<{ count:
       created_at: draft.created_at,
       updated_at: now,
       deleted_at: null,
-      ...(tenantIdForPublish ? { tenant_id: tenantIdForPublish } : {}),
+      ...(tid ? { tenant_id: tid } : {}),
     });
   }
 
@@ -533,6 +550,8 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
     throw new Error('Supabase not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Get all soft-deleted draft folders
   const deletedDrafts = await getDeletedDraftAssetFolders();
 
@@ -554,7 +573,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .in('asset_folder_id', batchIds)
       .eq('is_published', true);
 
-    clearPubAssets = await scopeToTenantRow(clearPubAssets);
+    clearPubAssets = scopeToTenantRow(clearPubAssets, tid);
     await clearPubAssets;
 
     let clearDraftAssets = client
@@ -563,7 +582,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .in('asset_folder_id', batchIds)
       .eq('is_published', false);
 
-    clearDraftAssets = await scopeToTenantRow(clearDraftAssets);
+    clearDraftAssets = scopeToTenantRow(clearDraftAssets, tid);
     await clearDraftAssets;
 
     // Clear parent references on child asset_folders
@@ -573,7 +592,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .in('asset_folder_id', batchIds)
       .eq('is_published', true);
 
-    clearPubParents = await scopeToTenantRow(clearPubParents);
+    clearPubParents = scopeToTenantRow(clearPubParents, tid);
     await clearPubParents;
 
     let clearDraftParents = client
@@ -582,7 +601,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .in('asset_folder_id', batchIds)
       .eq('is_published', false);
 
-    clearDraftParents = await scopeToTenantRow(clearDraftParents);
+    clearDraftParents = scopeToTenantRow(clearDraftParents, tid);
     await clearDraftParents;
   }
 
@@ -597,7 +616,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .in('id', batchIds)
       .eq('is_published', true);
 
-    delPubFolders = await scopeToTenantRow(delPubFolders);
+    delPubFolders = scopeToTenantRow(delPubFolders, tid);
 
     const { error: deletePublishedError } = await delPubFolders;
 
@@ -613,7 +632,7 @@ export async function hardDeleteSoftDeletedAssetFolders(): Promise<{ count: numb
       .eq('is_published', false)
       .not('deleted_at', 'is', null);
 
-    delDraftFolders = await scopeToTenantRow(delDraftFolders);
+    delDraftFolders = scopeToTenantRow(delDraftFolders, tid);
 
     const { error: deleteDraftError } = await delDraftFolders;
 

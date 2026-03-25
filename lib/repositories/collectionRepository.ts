@@ -29,6 +29,7 @@ export async function getAllCollections(filters?: QueryFilters): Promise<Collect
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
   const isPublished = filters?.is_published ?? false;
 
   let query = client
@@ -51,7 +52,7 @@ export async function getAllCollections(filters?: QueryFilters): Promise<Collect
     query = query.is('deleted_at', null);
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query;
 
@@ -97,6 +98,8 @@ export async function getPublishedCollectionIds(collectionIds: string[]): Promis
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let pubQuery = client
     .from('collections')
     .select('id')
@@ -104,7 +107,7 @@ export async function getPublishedCollectionIds(collectionIds: string[]): Promis
     .eq('is_published', true)
     .is('deleted_at', null);
 
-  pubQuery = await scopeToTenantRow(pubQuery);
+  pubQuery = scopeToTenantRow(pubQuery, tid);
 
   const { data, error } = await pubQuery;
 
@@ -132,6 +135,8 @@ export async function getCollectionById(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let query = client
     .from('collections')
     .select('*')
@@ -143,7 +148,7 @@ export async function getCollectionById(
     query = query.is('deleted_at', null);
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   const { data, error } = await query.single();
 
@@ -166,6 +171,8 @@ export async function getCollectionByName(name: string, isPublished: boolean = f
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let nameQuery = client
     .from('collections')
     .select('*')
@@ -173,7 +180,7 @@ export async function getCollectionByName(name: string, isPublished: boolean = f
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  nameQuery = await scopeToTenantRow(nameQuery);
+  nameQuery = scopeToTenantRow(nameQuery, tid);
 
   const { data, error } = await nameQuery.single();
 
@@ -236,6 +243,8 @@ export async function updateCollection(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let updateQ = client
     .from('collections')
     .update({
@@ -246,7 +255,7 @@ export async function updateCollection(
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  updateQ = await scopeToTenantRow(updateQ);
+  updateQ = scopeToTenantRow(updateQ, tid);
 
   const { data, error } = await updateQ.select().single();
 

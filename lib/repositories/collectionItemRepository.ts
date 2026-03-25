@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT } from '@/lib/supabase-constants';
 import type { CollectionItem, CollectionItemWithValues } from '@/types';
 import { randomUUID } from 'crypto';
@@ -45,6 +45,8 @@ export async function getTopItemsPerCollection(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   if (collectionIds.length === 0) {
     return [];
   }
@@ -74,7 +76,7 @@ export async function getTopItemsPerCollection(
       manualQuery = manualQuery.eq('is_publishable', true);
     }
 
-    manualQuery = await scopeToTenantRow(manualQuery);
+    manualQuery = scopeToTenantRow(manualQuery, tid);
 
     const { data: manualData, error: manualError } = await manualQuery;
 
@@ -128,6 +130,8 @@ export async function getItemsByCollectionId(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // If itemIds filter is provided, use those directly (for multi-reference fields)
   // If no items are linked, return early
   if (filters?.itemIds && filters.itemIds.length === 0) {
@@ -147,7 +151,7 @@ export async function getItemsByCollectionId(
       .eq('is_published', is_published)
       .is('deleted_at', null);
 
-    searchValsQuery = await scopeToTenantRow(searchValsQuery);
+    searchValsQuery = scopeToTenantRow(searchValsQuery, tid);
 
     const { data: matchingValues, error: searchError } = await searchValsQuery;
 
@@ -210,7 +214,7 @@ export async function getItemsByCollectionId(
     countQuery = countQuery.is('deleted_at', null);
   }
 
-  countQuery = await scopeToTenantRow(countQuery);
+  countQuery = scopeToTenantRow(countQuery, tid);
 
   // Execute count query
   const { count, error: countError } = await countQuery;
@@ -251,7 +255,7 @@ export async function getItemsByCollectionId(
     query = query.is('deleted_at', null);
   }
 
-  query = await scopeToTenantRow(query);
+  query = scopeToTenantRow(query, tid);
 
   // Apply pagination
   if (filters?.limit !== undefined) {
@@ -360,6 +364,8 @@ export async function getAllItemsByCollectionId(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   const allItems: CollectionItem[] = [];
   let offset = 0;
   let hasMore = true;
@@ -386,7 +392,7 @@ export async function getAllItemsByCollectionId(
       query = query.is('deleted_at', null);
     }
 
-    query = await scopeToTenantRow(query);
+    query = scopeToTenantRow(query, tid);
 
     const { data, error } = await query;
 
@@ -418,13 +424,15 @@ export async function getItemById(id: string, isPublished: boolean = false): Pro
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let itemQuery = client
     .from('collection_items')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished);
 
-  itemQuery = await scopeToTenantRow(itemQuery);
+  itemQuery = scopeToTenantRow(itemQuery, tid);
 
   const { data, error } = await itemQuery.single();
 
@@ -452,6 +460,8 @@ export async function getItemsByIds(ids: string[], isPublished: boolean = false)
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   let idsQuery = client
     .from('collection_items')
     .select('*')
@@ -459,7 +469,7 @@ export async function getItemsByIds(ids: string[], isPublished: boolean = false)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
-  idsQuery = await scopeToTenantRow(idsQuery);
+  idsQuery = scopeToTenantRow(idsQuery, tid);
 
   const { data, error } = await idsQuery;
 
@@ -483,6 +493,8 @@ export async function getItemWithValues(id: string, is_published: boolean = fals
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Get the item
   const item = await getItemById(id, is_published);
   if (!item) return null;
@@ -500,7 +512,7 @@ export async function getItemWithValues(id: string, is_published: boolean = fals
     valuesQuery = valuesQuery.is('deleted_at', null);
   }
 
-  valuesQuery = await scopeToTenantRow(valuesQuery);
+  valuesQuery = scopeToTenantRow(valuesQuery, tid);
 
   const { data: valuesData, error: valuesError } = await valuesQuery;
 
@@ -541,6 +553,8 @@ export async function getItemIdsByFieldValue(
     throw new Error('Supabase client not configured');
   }
 
+  const tid = await getTenantIdFromHeaders();
+
   // Find item IDs where the field value matches (single reference = exact, multi_reference = contains)
   // For single reference: value = targetValue (exact match)
   // For multi_reference: value is a JSON string like '["uuid1","uuid2"]' containing targetValue
@@ -553,7 +567,7 @@ export async function getItemIdsByFieldValue(
     .is('deleted_at', null)
     .or(`value.eq.${targetValue},value.like.%"${targetValue}"%`);
 
-  fieldValQuery = await scopeToTenantRow(fieldValQuery);
+  fieldValQuery = scopeToTenantRow(fieldValQuery, tid);
 
   const { data, error } = await fieldValQuery;
 
