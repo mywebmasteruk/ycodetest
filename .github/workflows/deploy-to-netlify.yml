@@ -2,13 +2,16 @@
 # Tenants access the builder at {slug}.masjidweb.com/ycode.
 #
 # One-time setup:
-#   1. Add repository secrets:
+#   1. Add repository secrets (Settings → Secrets and variables → Actions):
 #      - NETLIFY_AUTH_TOKEN  (personal access token from Netlify)
-#      - NETLIFY_YCODE_SITE_ID  (site ID for the masjidweb-multi Netlify site)
+#      - NETLIFY_YCODE_SITE_ID  OR  NETLIFY_SITE_ID  (site ID from Netlify)
 #   2. Configure env vars on the Netlify site itself:
 #      - SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, SUPABASE_CONNECTION_URL
 #      - TENANT_DOMAIN_SUFFIX=masjidweb.com
 #      - PAGE_AUTH_SECRET (generate with: openssl rand -hex 32)
+#
+# Build must use `netlify build` (not plain `npm run build`) so @netlify/plugin-nextjs
+# bundles serverless + edge handlers before deploy.
 
 name: Deploy ycode-masjidweb to Netlify
 
@@ -38,11 +41,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Netlify build (Next.js runtime + plugin)
+        env:
+          NODE_ENV: production
+        run: npx --yes netlify-cli build
 
       - name: Deploy to Netlify (production)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_YCODE_SITE_ID }}
-        run: npx --yes netlify-cli deploy --prod --site="$NETLIFY_SITE_ID"
+          NETLIFY_SITE_ID_ALT: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          SITE_ID="${NETLIFY_SITE_ID:-${NETLIFY_SITE_ID_ALT:-}}"
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
+            echo "::error::Missing repository secret NETLIFY_AUTH_TOKEN"
+            exit 1
+          fi
+          if [ -z "$SITE_ID" ]; then
+            echo "::error::Set NETLIFY_YCODE_SITE_ID or NETLIFY_SITE_ID in repository secrets"
+            exit 1
+          fi
+          npx --yes netlify-cli deploy --prod --no-build --site="$SITE_ID"
