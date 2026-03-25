@@ -37,12 +37,32 @@ jobs:
           NETLIFY_SITE_ID_ALT: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
           set -euo pipefail
+          # Runtime diagnostics (debug 87ea68) — booleans only, no secret values
+          {
+            echo "## Netlify deploy diagnostics (87ea68)"
+            echo "- NETLIFY_BUILD_HOOK_URL non-empty: $([ -n "${NETLIFY_BUILD_HOOK_URL:-}" ] && echo yes || echo no)"
+            echo "- NETLIFY_AUTH_TOKEN non-empty: $([ -n "${NETLIFY_AUTH_TOKEN:-}" ] && echo yes || echo no)"
+            echo "- NETLIFY_YCODE_SITE_ID non-empty: $([ -n "${NETLIFY_SITE_ID_PRIMARY:-}" ] && echo yes || echo no)"
+            echo "- NETLIFY_SITE_ID non-empty: $([ -n "${NETLIFY_SITE_ID_ALT:-}" ] && echo yes || echo no)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
           if [ -n "${NETLIFY_BUILD_HOOK_URL:-}" ]; then
+            echo "path=build_hook" >> "$GITHUB_STEP_SUMMARY"
             echo "Triggering deploy via Netlify build hook"
-            curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' "$NETLIFY_BUILD_HOOK_URL"
+            HOOK_HTTP=$(curl -sS -o /tmp/netlify_hook_body.txt -w "%{http_code}" -X POST \
+              -H 'Content-Type: application/json' -d '{}' \
+              "$NETLIFY_BUILD_HOOK_URL" || echo "000")
+            echo "- Build hook HTTP status: ${HOOK_HTTP}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$HOOK_HTTP" != "200" ] && [ "$HOOK_HTTP" != "201" ] && [ "$HOOK_HTTP" != "204" ]; then
+              echo "::error::Build hook returned HTTP ${HOOK_HTTP} (expected 2xx). Check NETLIFY_BUILD_HOOK_URL in repo secrets."
+              head -c 500 /tmp/netlify_hook_body.txt >&2 || true
+              exit 1
+            fi
             exit 0
           fi
+
           SITE_ID="${NETLIFY_SITE_ID_PRIMARY:-${NETLIFY_SITE_ID_ALT:-}}"
+          echo "path=cli_trigger" >> "$GITHUB_STEP_SUMMARY"
           if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
             echo "::error::Set NETLIFY_BUILD_HOOK_URL, or set NETLIFY_AUTH_TOKEN + NETLIFY_YCODE_SITE_ID (or NETLIFY_SITE_ID)"
             exit 1
@@ -51,4 +71,13 @@ jobs:
             echo "::error::Set NETLIFY_BUILD_HOOK_URL, or set NETLIFY_YCODE_SITE_ID / NETLIFY_SITE_ID with NETLIFY_AUTH_TOKEN"
             exit 1
           fi
-          npx --yes netlify-cli deploy --prod --trigger --site="$SITE_ID"
+          set +e
+          OUT=$(npx --yes netlify-cli deploy --prod --trigger --site="$SITE_ID" 2>&1)
+          CODE=$?
+          set -e
+          echo "- netlify deploy exit code: ${CODE}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" != "0" ]; then
+            echo "::error::netlify deploy failed (exit ${CODE}). See job log for CLI output."
+            echo "$OUT" >&2
+            exit "$CODE"
+          fi
