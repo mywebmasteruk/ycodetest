@@ -31,16 +31,36 @@ export default function MigrationChecker({ onComplete }: MigrationCheckerProps) 
       // Single API call: checks AND runs migrations if needed
       const response = await fetch('/ycode/api/setup/migrate', {
         method: 'POST',
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
       });
 
-      if (!response.ok) {
-        console.error('Migration request failed');
-        console.error(await response.json());
-        onComplete(); // Allow builder to load anyway
-        return;
+      const raw = await response.text();
+      let result: { error?: string } = {};
+
+      if (raw.trim()) {
+        try {
+          result = JSON.parse(raw) as { error?: string };
+        } catch {
+          setError(
+            `Migration server returned a non-JSON response (${response.status}). ` +
+              'This often happens when a proxy or error page is returned instead of the API. ' +
+              `First characters: ${raw.slice(0, 120).replace(/\s+/g, ' ')}`,
+          );
+          setIsChecking(false);
+          return;
+        }
       }
 
-      const result = await response.json();
+      if (!response.ok) {
+        const msg =
+          result.error ||
+          `Migration request failed (HTTP ${response.status} ${response.statusText})`;
+        console.error('[MigrationChecker]', msg, raw.slice(0, 500));
+        setError(msg);
+        setIsChecking(false);
+        return;
+      }
 
       if (result.error) {
         setError(result.error);
