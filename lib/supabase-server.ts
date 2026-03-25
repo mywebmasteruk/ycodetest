@@ -64,19 +64,27 @@ async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
 /**
  * Get Supabase client for data access.
  *
- * When a tenant context is active (x-tenant-id header set by middleware),
- * returns an authenticated client so RLS filters rows by tenant_id.
- * Otherwise returns the service-role client for admin / setup operations.
+ * When a user has a Supabase session (editor logged in), returns the anon-key
+ * server client with cookies so PostgREST uses `authenticated` and RLS applies
+ * (JWT includes user_metadata.tenant_id).
+ *
+ * Do not rely on `x-tenant-id` alone: middleware-set headers are not always
+ * visible to Route Handlers in Next.js; that previously forced service role and
+ * bypassed RLS.
+ *
+ * Service role is used only when there is no session (setup wizard, migrations).
  */
 export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClient | null> {
-  const headerTenantId = await getTenantIdFromHeaders();
-
-  if (headerTenantId) {
-    const authClient = await getAuthenticatedClient();
-    if (authClient) return authClient;
+  const authClient = await getAuthenticatedClient();
+  if (authClient) {
+    const {
+      data: { user },
+    } = await authClient.auth.getUser();
+    if (user) {
+      return authClient;
+    }
   }
 
-  // Fallback: service-role client (setup wizard, admin, no tenant context)
   const creds = await getSupabaseCredentials();
 
   if (!creds) {
@@ -158,14 +166,30 @@ export async function testSupabaseConnection(
   }
 }
 
+async function getTenantIdFromSession(): Promise<string | null> {
+  const client = await getAuthenticatedClient();
+  if (!client) return null;
+  const {
+    data: { user },
+  } = await client.auth.getUser();
+  const tid = user?.user_metadata?.tenant_id;
+  return typeof tid === 'string' && tid.length > 0 ? tid : null;
+}
+
 /**
- * Get tenant ID from request headers set by the multi-tenant middleware.
- * Returns null when no subdomain is active (admin / master site).
+ * Tenant id for Knex filters: middleware `x-tenant-id` when present, else
+ * `user_metadata.tenant_id` from the Supabase session (same source as RLS JWT).
  */
 export async function getTenantIdFromHeaders(): Promise<string | null> {
   try {
     const h = await headers();
-    return h.get('x-tenant-id') || null;
+    const fromHeader = h.get('x-tenant-id');
+    if (fromHeader) return fromHeader;
+  } catch {
+    // ignore
+  }
+  try {
+    return await getTenantIdFromSession();
   } catch {
     return null;
   }
@@ -175,7 +199,7 @@ export async function getTenantIdFromHeaders(): Promise<string | null> {
  * Execute raw SQL query
  */
 export async function executeSql(sql: string): Promise<{ success: boolean; error?: string }> {
-  const client = await getSupabaseAdmin();
+  const client = await getSupabaseServiceRole();
 
   if (!client) {
     return { success: false, error: 'Supabase not configured' };
