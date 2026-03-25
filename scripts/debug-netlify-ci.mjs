@@ -116,7 +116,7 @@ if (hook) {
   });
   // #endregion
   console.log(
-    'Set NETLIFY_BUILD_HOOK_URL or (NETLIFY_AUTH_TOKEN + NETLIFY_YCODE_SITE_ID|NETLIFY_SITE_ID)',
+    'Set NETLIFY_BUILD_HOOK_URL, or NETLIFY_AUTH_TOKEN + site id. On GitHub you can use repository Variables: NETLIFY_SITE_ID (or secrets).',
   );
   process.exitCode = 1;
 }
