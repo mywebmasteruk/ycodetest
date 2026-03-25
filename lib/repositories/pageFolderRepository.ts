@@ -4,7 +4,7 @@
  * Data access layer for page folder operations with Supabase
  */
 
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
 import type { PageFolder } from '../../types';
 import { incrementSiblingOrders } from '../services/pageService';
 
@@ -68,6 +68,8 @@ export async function getAllPageFolders(filters?: QueryFilters): Promise<PageFol
     });
   }
 
+  query = await scopeToTenantRow(query);
+
   const { data, error } = await query.order('order', { ascending: true });
 
   if (error) {
@@ -89,13 +91,16 @@ export async function getPageFolderById(id: string, isPublished = false): Promis
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  let pfQ = client
     .from('page_folders')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  pfQ = await scopeToTenantRow(pfQ);
+
+  const { data, error } = await pfQ.single();
 
   if (error) {
     if (error.code === 'PGRST116') {

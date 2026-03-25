@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT, SUPABASE_WRITE_BATCH_SIZE } from '@/lib/supabase-constants';
 import { cleanupOrphanedStorageFiles } from '@/lib/storage-utils';
 import { generateFontContentHash } from '@/lib/hash-utils';
@@ -14,11 +14,15 @@ export async function getAllFonts(): Promise<Font[]> {
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  let fontsQ = client
     .from('fonts')
     .select('*')
     .eq('is_published', false)
-    .is('deleted_at', null)
+    .is('deleted_at', null);
+
+  fontsQ = await scopeToTenantRow(fontsQ);
+
+  const { data, error } = await fontsQ
     .order('created_at', { ascending: true })
     .limit(SUPABASE_QUERY_LIMIT);
 
@@ -37,11 +41,15 @@ export async function getPublishedFonts(): Promise<Font[]> {
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  let pubFontsQ = client
     .from('fonts')
     .select('*')
     .eq('is_published', true)
-    .is('deleted_at', null)
+    .is('deleted_at', null);
+
+  pubFontsQ = await scopeToTenantRow(pubFontsQ);
+
+  const { data, error } = await pubFontsQ
     .order('created_at', { ascending: true })
     .limit(SUPABASE_QUERY_LIMIT);
 
@@ -60,13 +68,16 @@ export async function getFontById(id: string): Promise<Font | null> {
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  let fontByIdQ = client
     .from('fonts')
     .select('*')
     .eq('id', id)
     .eq('is_published', false)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  fontByIdQ = await scopeToTenantRow(fontByIdQ);
+
+  const { data, error } = await fontByIdQ.single();
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to fetch font: ${error.message}`);

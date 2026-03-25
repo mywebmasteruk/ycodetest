@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { Collection, CreateCollectionData, UpdateCollectionData } from '@/types';
 import { randomUUID } from 'crypto';
 
@@ -51,6 +51,8 @@ export async function getAllCollections(filters?: QueryFilters): Promise<Collect
     query = query.is('deleted_at', null);
   }
 
+  query = await scopeToTenantRow(query);
+
   const { data, error } = await query;
 
   if (error) {
@@ -95,12 +97,16 @@ export async function getPublishedCollectionIds(collectionIds: string[]): Promis
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  let pubQuery = client
     .from('collections')
     .select('id')
     .in('id', collectionIds)
     .eq('is_published', true)
     .is('deleted_at', null);
+
+  pubQuery = await scopeToTenantRow(pubQuery);
+
+  const { data, error } = await pubQuery;
 
   if (error) {
     throw new Error(`Failed to check published collections: ${error.message}`);
@@ -137,6 +143,8 @@ export async function getCollectionById(
     query = query.is('deleted_at', null);
   }
 
+  query = await scopeToTenantRow(query);
+
   const { data, error } = await query.single();
 
   if (error && error.code !== 'PGRST116') {
@@ -158,13 +166,16 @@ export async function getCollectionByName(name: string, isPublished: boolean = f
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  let nameQuery = client
     .from('collections')
     .select('*')
     .eq('name', name)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  nameQuery = await scopeToTenantRow(nameQuery);
+
+  const { data, error } = await nameQuery.single();
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to fetch collection: ${error.message}`);
@@ -185,6 +196,7 @@ export async function createCollection(collectionData: CreateCollectionData): Pr
 
   const id = randomUUID();
   const isPublished = collectionData.is_published ?? false;
+  const tenantId = await getTenantIdFromHeaders();
 
   const { data, error } = await client
     .from('collections')
@@ -193,6 +205,7 @@ export async function createCollection(collectionData: CreateCollectionData): Pr
       ...collectionData,
       order: collectionData.order ?? 0,
       is_published: isPublished,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
@@ -223,7 +236,7 @@ export async function updateCollection(
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  let updateQ = client
     .from('collections')
     .update({
       ...collectionData,
@@ -231,9 +244,11 @@ export async function updateCollection(
     })
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .select()
-    .single();
+    .is('deleted_at', null);
+
+  updateQ = await scopeToTenantRow(updateQ);
+
+  const { data, error } = await updateQ.select().single();
 
   if (error) {
     throw new Error(`Failed to update collection: ${error.message}`);

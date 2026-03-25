@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
 import { SUPABASE_QUERY_LIMIT, SUPABASE_WRITE_BATCH_SIZE } from '@/lib/supabase-constants';
 import { STORAGE_BUCKET, STORAGE_FOLDERS } from '@/lib/asset-constants';
 import { cleanupOrphanedStorageFiles } from '@/lib/storage-utils';
@@ -150,6 +150,8 @@ export async function getAllAssets(folderId?: string | null): Promise<Asset[]> {
         query = query.eq('asset_folder_id', folderId);
       }
     }
+
+    query = await scopeToTenantRow(query);
 
     const { data, error } = await query;
 

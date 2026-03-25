@@ -196,6 +196,22 @@ export async function getTenantIdFromHeaders(): Promise<string | null> {
 }
 
 /**
+ * Defense-in-depth: when tenant context exists, narrow PostgREST queries to `tenant_id`.
+ * Use on tables that have a `tenant_id` column so listings stay correct even if the
+ * client falls back to the service role (RLS bypass).
+ *
+ * No-op in single-tenant / pre-login contexts where no tenant id is available.
+ *
+ * Typed as `any` so Supabase PostgrestFilterBuilder chains keep inferring correctly.
+ */
+ 
+export async function scopeToTenantRow(query: any): Promise<any> {
+  const tid = await getTenantIdFromHeaders();
+  if (!tid) return query;
+  return query.eq('tenant_id', tid);
+}
+
+/**
  * Execute raw SQL query
  */
 export async function executeSql(sql: string): Promise<{ success: boolean; error?: string }> {

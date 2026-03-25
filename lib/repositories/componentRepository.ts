@@ -6,7 +6,7 @@
  * Supports draft/published workflow with content hash-based change detection
  */
 
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
 import type { Component, Layer } from '@/types';
 import { generateComponentContentHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
@@ -30,12 +30,15 @@ export async function getAllComponents(isPublished: boolean = false): Promise<Co
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const { data, error } = await client
+  let compQuery = client
     .from('components')
     .select('*')
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+    .is('deleted_at', null);
+
+  compQuery = await scopeToTenantRow(compQuery);
+
+  const { data, error } = await compQuery.order('created_at', { ascending: false });
 
   if (error) {
     throw new Error(`Failed to fetch components: ${error.message}`);
@@ -54,13 +57,16 @@ export async function getComponentById(id: string, isPublished: boolean = false)
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const { data, error } = await client
+  let oneComp = client
     .from('components')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  oneComp = await scopeToTenantRow(oneComp);
+
+  const { data, error } = await oneComp.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -89,12 +95,16 @@ export async function getComponentsByIds(
     return {};
   }
 
-  const { data, error } = await client
+  let byIdsQ = client
     .from('components')
     .select('*')
     .in('id', ids)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
+
+  byIdsQ = await scopeToTenantRow(byIdsQ);
+
+  const { data, error } = await byIdsQ;
 
   if (error) {
     throw new Error(`Failed to fetch components: ${error.message}`);

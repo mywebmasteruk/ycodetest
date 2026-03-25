@@ -4,7 +4,7 @@
  * Data access layer for page operations with Supabase
  */
 
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, scopeToTenantRow } from '@/lib/supabase-server';
 import { reorderSiblings } from '@/lib/repositories/pageFolderRepository';
 import type { Page, PageSettings } from '../../types';
 import { isHomepage } from '../page-utils';
@@ -100,6 +100,8 @@ export async function getAllPages(filters?: QueryFilters): Promise<Page[]> {
     });
   }
 
+  query = await scopeToTenantRow(query);
+
   const { data, error } = await query.order('order', { ascending: true });
 
   if (error) {
@@ -122,13 +124,16 @@ export async function getPageById(id: string, isPublished: boolean = false): Pro
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  let pageByIdQuery = client
     .from('pages')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  pageByIdQuery = await scopeToTenantRow(pageByIdQuery);
+
+  const { data, error } = await pageByIdQuery.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -164,6 +169,8 @@ export async function getPageBySlug(slug: string, filters?: QueryFilters): Promi
       query = query.eq(column, value);
     });
   }
+
+  query = await scopeToTenantRow(query);
 
   const { data, error } = await query.single();
 
@@ -711,6 +718,8 @@ export async function getAllDraftPages(includeDeleted = false): Promise<Page[]> 
     query = query.is('deleted_at', null);
   }
 
+  query = await scopeToTenantRow(query);
+
   const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
@@ -735,12 +744,16 @@ export async function getPublishedPagesByIds(ids: string[]): Promise<Page[]> {
     return [];
   }
 
-  const { data, error } = await client
+  let pubByIdsQuery = client
     .from('pages')
     .select('*')
     .in('id', ids)
     .eq('is_published', true)
     .is('deleted_at', null);
+
+  pubByIdsQuery = await scopeToTenantRow(pubByIdsQuery);
+
+  const { data, error } = await pubByIdsQuery;
 
   if (error) {
     throw new Error(`Failed to fetch published pages: ${error.message}`);
@@ -770,7 +783,9 @@ export async function getPagesByFolder(folderId: string | null): Promise<Page[]>
     ? query.is('page_folder_id', null)
     : query.eq('page_folder_id', folderId);
 
-  const { data, error } = await finalQuery.order('created_at', { ascending: false });
+  const scopedFolder = await scopeToTenantRow(finalQuery);
+
+  const { data, error } = await scopedFolder.order('created_at', { ascending: false });
 
   if (error) {
     throw new Error(`Failed to fetch pages by folder: ${error.message}`);
