@@ -1,0 +1,48 @@
+# Deploy ycode-masjidweb to the shared Netlify site (masjidweb-multi).
+# Tenants access the builder at {slug}.masjidweb.com/ycode.
+#
+# One-time setup:
+#   1. Add repository secrets:
+#      - NETLIFY_AUTH_TOKEN  (personal access token from Netlify)
+#      - NETLIFY_YCODE_SITE_ID  (site ID for the masjidweb-multi Netlify site)
+#   2. Configure env vars on the Netlify site itself:
+#      - SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, SUPABASE_CONNECTION_URL
+#      - TENANT_DOMAIN_SUFFIX=masjidweb.com
+#      - PAGE_AUTH_SECRET (generate with: openssl rand -hex 32)
+
+name: Deploy ycode-masjidweb to Netlify
+
+on:
+  push:
+    branches: [single-site, tenant-multi]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ycode-masjidweb
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Netlify (production)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_YCODE_SITE_ID }}
+        run: npx --yes netlify-cli deploy --prod --site="$NETLIFY_SITE_ID"

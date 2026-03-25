@@ -4,13 +4,22 @@ import type { NextRequest } from 'next/server';
 
 // ── Multi-tenant subdomain resolution ───────────────────────────────────────
 
-const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp', 'manage']);
+/** `manage` is the master demo builder host — resolved via MASTER_TENANT_ID, not reserved. */
+const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp']);
 const TENANT_DOMAIN_SUFFIX = process.env.TENANT_DOMAIN_SUFFIX || '';
+
+/** Subdomain for the template / demo editor (default: manage). */
+const MASTER_BUILDER_SUBDOMAIN = (
+  process.env.MASTER_BUILDER_SUBDOMAIN || 'manage'
+).toLowerCase();
 
 const tenantCache = new Map<string, { id: string; slug: string; ts: number }>();
 const CACHE_TTL_MS = 60_000;
 
-async function lookupTenant(slug: string): Promise<{ id: string; slug: string } | null> {
+async function lookupTenant(
+  slug: string,
+  allowProvisioning = false,
+): Promise<{ id: string; slug: string } | null> {
   const cached = tenantCache.get(slug);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return { id: cached.id, slug: cached.slug };
@@ -24,7 +33,7 @@ async function lookupTenant(slug: string): Promise<{ id: string; slug: string } 
   try {
     const qs = new URLSearchParams({
       slug: `eq.${slug}`,
-      status: 'eq.active',
+      status: allowProvisioning ? 'in.(active,provisioning)' : 'eq.active',
       select: 'id,slug',
       limit: '1',
     });
@@ -163,13 +172,42 @@ export async function proxy(request: NextRequest) {
   // ── Tenant subdomain resolution ──
   const host = request.headers.get('host') || '';
   const subdomain = extractSubdomain(host);
+
+  const provisioningSecret = process.env.PROVISIONING_WEBHOOK_SECRET;
+  const isProvisionPublish =
+    request.method === 'POST' &&
+    pathname === '/ycode/api/publish' &&
+    !!provisioningSecret &&
+    request.headers.get('x-provisioning-secret') === provisioningSecret;
+
   if (subdomain) {
-    const tenant = await lookupTenant(subdomain);
-    if (!tenant) {
-      return new NextResponse('Tenant not found', { status: 404 });
+    if (subdomain === MASTER_BUILDER_SUBDOMAIN) {
+      const masterId =
+        process.env.MASTER_TENANT_ID?.trim() ||
+        process.env.TEMPLATE_TENANT_ID?.trim() ||
+        process.env.NEXT_PUBLIC_MASTER_TENANT_ID?.trim();
+      if (masterId) {
+        request.headers.set('x-tenant-id', masterId);
+        request.headers.set('x-tenant-slug', MASTER_BUILDER_SUBDOMAIN);
+      } else {
+        const tenant = await lookupTenant(subdomain, isProvisionPublish);
+        if (!tenant) {
+          return new NextResponse(
+            'Master builder: set MASTER_TENANT_ID (template tenant UUID) or add tenant_registry slug "manage".',
+            { status: 503 },
+          );
+        }
+        request.headers.set('x-tenant-id', tenant.id);
+        request.headers.set('x-tenant-slug', tenant.slug);
+      }
+    } else {
+      const tenant = await lookupTenant(subdomain, isProvisionPublish);
+      if (!tenant) {
+        return new NextResponse('Tenant not found', { status: 404 });
+      }
+      request.headers.set('x-tenant-id', tenant.id);
+      request.headers.set('x-tenant-slug', tenant.slug);
     }
-    request.headers.set('x-tenant-id', tenant.id);
-    request.headers.set('x-tenant-slug', tenant.slug);
   } else if (pathname.startsWith('/ycode')) {
     // Editor on the manage subdomain: resolve tenant from the user's JWT
     const sbConfig = getSupabaseEnvConfig();
@@ -193,12 +231,14 @@ export async function proxy(request: NextRequest) {
 
   // Protect API and preview routes with auth
   if (pathname.startsWith('/ycode/api') || pathname.startsWith('/ycode/preview')) {
-    const authResponse = await verifyApiAuth(request);
-    if (authResponse) {
-      if (pathname.startsWith('/ycode/preview')) {
-        return NextResponse.redirect(new URL('/ycode', request.url));
+    if (!isProvisionPublish) {
+      const authResponse = await verifyApiAuth(request);
+      if (authResponse) {
+        if (pathname.startsWith('/ycode/preview')) {
+          return NextResponse.redirect(new URL('/ycode', request.url));
+        }
+        return authResponse;
       }
-      return authResponse;
     }
   }
 
