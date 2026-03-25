@@ -1,17 +1,13 @@
-# Deploy ycode-masjidweb to the shared Netlify site (masjidweb-multi).
-# Tenants access the builder at {slug}.masjidweb.com/ycode.
+# After you push, this tells Netlify to start a **production build on Netlify’s servers**
+# (same as clicking “Trigger deploy” in the Netlify UI). No project build runs on GitHub —
+# avoids runner-only failures and uses the env vars already set on the Netlify site.
 #
-# One-time setup:
-#   1. Add repository secrets (Settings → Secrets and variables → Actions):
+# Prerequisites:
+#   1. In Netlify: Site → Build & deploy → Continuous deployment — connect this GitHub repo
+#      and set the production branch (e.g. single-site or main) to match what you deploy.
+#   2. GitHub repo secrets (Settings → Secrets and variables → Actions):
 #      - NETLIFY_AUTH_TOKEN  (personal access token from Netlify)
-#      - NETLIFY_YCODE_SITE_ID  OR  NETLIFY_SITE_ID  (site ID from Netlify)
-#   2. Configure env vars on the Netlify site itself:
-#      - SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, SUPABASE_CONNECTION_URL
-#      - TENANT_DOMAIN_SUFFIX=masjidweb.com
-#      - PAGE_AUTH_SECRET (generate with: openssl rand -hex 32)
-#
-# Build must use `netlify build` (not plain `npm run build`) so @netlify/plugin-nextjs
-# bundles serverless + edge handlers before deploy.
+#      - NETLIFY_YCODE_SITE_ID  OR  NETLIFY_SITE_ID  (site ID from Netlify → Site settings → General)
 
 name: Deploy ycode-masjidweb to Netlify
 
@@ -29,40 +25,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      # CI has no local `.netlify` link — set NETLIFY_SITE_ID so the CLI loads
-      # that site's Production env vars during `netlify build` (Supabase keys, etc.).
-      - name: Netlify build (Next.js runtime + plugin)
-        env:
-          NODE_ENV: production
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID_PRIMARY: ${{ secrets.NETLIFY_YCODE_SITE_ID }}
-          NETLIFY_SITE_ID_ALT: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          set -euo pipefail
-          export NETLIFY_SITE_ID="${NETLIFY_SITE_ID_PRIMARY:-${NETLIFY_SITE_ID_ALT:-}}"
-          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
-            echo "::error::Missing repository secret NETLIFY_AUTH_TOKEN"
-            exit 1
-          fi
-          if [ -z "$NETLIFY_SITE_ID" ]; then
-            echo "::error::Set NETLIFY_YCODE_SITE_ID or NETLIFY_SITE_ID in repository secrets"
-            exit 1
-          fi
-          npx --yes netlify-cli build --context production
-
-      - name: Deploy to Netlify (production)
+      - name: Trigger Netlify production build
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID_PRIMARY: ${{ secrets.NETLIFY_YCODE_SITE_ID }}
@@ -78,4 +41,4 @@ jobs:
             echo "::error::Set NETLIFY_YCODE_SITE_ID or NETLIFY_SITE_ID in repository secrets"
             exit 1
           fi
-          npx --yes netlify-cli deploy --prod --no-build --site="$SITE_ID"
+          npx --yes netlify-cli deploy --prod --trigger --site="$SITE_ID"
