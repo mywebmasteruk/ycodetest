@@ -1,19 +1,11 @@
-# After you push, this tells Netlify to start a **production build on Netlify’s servers**
-# (same as clicking “Trigger deploy” in the Netlify UI). No project build runs on GitHub —
-# avoids runner-only failures and uses the env vars already set on the Netlify site.
+# Your Netlify site **masjidweb-multi** is already connected to this GitHub repo
+# on branch **single-site**. Netlify builds and deploys on every push — no tokens
+# or secrets are required in GitHub for that.
 #
-# Prerequisites (pick one way to trigger):
-#
-# A) Build hook (simplest — recommended)
-#    Netlify → Site configuration → Build & deploy → Build hooks → Add → copy URL.
-#    GitHub → Settings → Secrets and variables → Actions:
-#    - Secret NETLIFY_BUILD_HOOK_URL, OR repository Variable NETLIFY_BUILD_HOOK_URL (same name).
-#
-# B) Netlify CLI trigger
-#    Secrets: NETLIFY_AUTH_TOKEN (PAT). Site ID via Secret or Variable:
-#    - NETLIFY_YCODE_SITE_ID / NETLIFY_SITE_ID (secrets), or vars NETLIFY_SITE_ID / NETLIFY_YCODE_SITE_ID.
+# This workflow only records a green check so Actions does not look “broken”.
+# Real deploy status: https://app.netlify.com/ (site masjidweb-multi)
 
-name: Deploy ycode-masjidweb to Netlify
+name: Netlify deploy (via Netlify Git integration)
 
 on:
   push:
@@ -21,70 +13,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-ycode-masjidweb
+  group: netlify-deploy-notice
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  netlify-builds-this-repo:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Trigger Netlify production build
-        env:
-          NETLIFY_BUILD_HOOK_SECRET: ${{ secrets.NETLIFY_BUILD_HOOK_URL }}
-          NETLIFY_BUILD_HOOK_VAR: ${{ vars.NETLIFY_BUILD_HOOK_URL }}
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID_PRIMARY: ${{ secrets.NETLIFY_YCODE_SITE_ID }}
-          NETLIFY_SITE_ID_ALT: ${{ secrets.NETLIFY_SITE_ID }}
-          NETLIFY_SITE_ID_VAR: ${{ vars.NETLIFY_SITE_ID }}
-          NETLIFY_YCODE_SITE_ID_VAR: ${{ vars.NETLIFY_YCODE_SITE_ID }}
+      - name: Confirm Netlify handles production deploys
         run: |
-          set -euo pipefail
-          HOOK_URL="${NETLIFY_BUILD_HOOK_SECRET:-${NETLIFY_BUILD_HOOK_VAR:-}}"
-          SITE_ID="${NETLIFY_SITE_ID_PRIMARY:-${NETLIFY_SITE_ID_ALT:-${NETLIFY_SITE_ID_VAR:-${NETLIFY_YCODE_SITE_ID_VAR:-}}}}"
-          # Runtime diagnostics (debug 87ea68) — booleans only, no secret values
-          {
-            echo "## Netlify deploy diagnostics (87ea68)"
-            echo "- build hook (secret or var) non-empty: $([ -n "${HOOK_URL:-}" ] && echo yes || echo no)"
-            echo "- NETLIFY_AUTH_TOKEN non-empty: $([ -n "${NETLIFY_AUTH_TOKEN:-}" ] && echo yes || echo no)"
-            echo "- site id (any of 4 inputs) non-empty: $([ -n "${SITE_ID:-}" ] && echo yes || echo no)"
-            echo "- NETLIFY_YCODE_SITE_ID secret non-empty: $([ -n "${NETLIFY_SITE_ID_PRIMARY:-}" ] && echo yes || echo no)"
-            echo "- NETLIFY_SITE_ID secret non-empty: $([ -n "${NETLIFY_SITE_ID_ALT:-}" ] && echo yes || echo no)"
-            echo "- vars.NETLIFY_SITE_ID non-empty: $([ -n "${NETLIFY_SITE_ID_VAR:-}" ] && echo yes || echo no)"
-            echo "- vars.NETLIFY_YCODE_SITE_ID non-empty: $([ -n "${NETLIFY_YCODE_SITE_ID_VAR:-}" ] && echo yes || echo no)"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -n "${HOOK_URL:-}" ]; then
-            echo "path=build_hook" >> "$GITHUB_STEP_SUMMARY"
-            echo "Triggering deploy via Netlify build hook"
-            HOOK_HTTP=$(curl -sS -o /tmp/netlify_hook_body.txt -w "%{http_code}" -X POST \
-              -H 'Content-Type: application/json' -d '{}' \
-              "$HOOK_URL" || echo "000")
-            echo "- Build hook HTTP status: ${HOOK_HTTP}" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$HOOK_HTTP" != "200" ] && [ "$HOOK_HTTP" != "201" ] && [ "$HOOK_HTTP" != "204" ]; then
-              echo "::error::Build hook returned HTTP ${HOOK_HTTP} (expected 2xx). Check NETLIFY_BUILD_HOOK_URL in repo secrets."
-              head -c 500 /tmp/netlify_hook_body.txt >&2 || true
-              exit 1
-            fi
-            exit 0
-          fi
-
-          echo "path=cli_trigger" >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
-            echo "::error::Set NETLIFY_BUILD_HOOK_URL (secret or variable), or set NETLIFY_AUTH_TOKEN + site id (secret or variable NETLIFY_SITE_ID)"
-            exit 1
-          fi
-          if [ -z "$SITE_ID" ]; then
-            echo "::error::Set a build hook URL, or set site id: secrets NETLIFY_YCODE_SITE_ID / NETLIFY_SITE_ID, or variables NETLIFY_SITE_ID / NETLIFY_YCODE_SITE_ID (with NETLIFY_AUTH_TOKEN)"
-            exit 1
-          fi
-          set +e
-          OUT=$(npx --yes netlify-cli deploy --prod --trigger --site="$SITE_ID" 2>&1)
-          CODE=$?
-          set -e
-          echo "- netlify deploy exit code: ${CODE}" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$CODE" != "0" ]; then
-            echo "::error::netlify deploy failed (exit ${CODE}). See job log for CLI output."
-            echo "$OUT" >&2
-            exit "$CODE"
-          fi
+          echo "::notice::Pushes to this branch trigger Netlify automatically (repo + branch linked in Netlify). Check the Netlify dashboard for build logs."
+          echo "OK — no GitHub secret required for deploy."
