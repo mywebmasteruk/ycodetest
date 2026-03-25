@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server';
 
 // ── Multi-tenant subdomain resolution ───────────────────────────────────────
 
-const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp']);
+const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp', 'manage']);
 const TENANT_DOMAIN_SUFFIX = process.env.TENANT_DOMAIN_SUFFIX || '';
 
 const tenantCache = new Map<string, { id: string; slug: string; ts: number }>();
@@ -16,9 +16,10 @@ async function lookupTenant(slug: string): Promise<{ id: string; slug: string } 
     return { id: cached.id, slug: cached.slug };
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
+  const envConfig = getSupabaseEnvConfig();
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!envConfig || !key) return null;
+  const url = envConfig.url;
 
   try {
     const qs = new URLSearchParams({
@@ -169,6 +170,25 @@ export async function proxy(request: NextRequest) {
     }
     request.headers.set('x-tenant-id', tenant.id);
     request.headers.set('x-tenant-slug', tenant.slug);
+  } else if (pathname.startsWith('/ycode')) {
+    // Editor on the manage subdomain: resolve tenant from the user's JWT
+    const sbConfig = getSupabaseEnvConfig();
+    if (sbConfig) {
+      try {
+        const supabase = createServerClient(sbConfig.url, sbConfig.anonKey, {
+          cookies: {
+            getAll() { return request.cookies.getAll(); },
+            setAll() { /* read-only in middleware */ },
+          },
+        });
+        const { data: { user } } = await supabase.auth.getUser();
+        const tid = user?.user_metadata?.tenant_id;
+        if (tid) {
+          request.headers.set('x-tenant-id', tid);
+          request.headers.set('x-tenant-slug', user.user_metadata.tenant_slug || '');
+        }
+      } catch { /* no session — unauthenticated visitor */ }
+    }
   }
 
   // Protect API and preview routes with auth

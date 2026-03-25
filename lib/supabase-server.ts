@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { headers } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
+import { headers, cookies } from 'next/headers';
 import { credentials } from './credentials';
 import { parseSupabaseConfig } from './supabase-config-parser';
 import type { SupabaseConfig, SupabaseCredentials } from '@/types';
@@ -36,13 +37,46 @@ async function getSupabaseCredentials(): Promise<SupabaseCredentials | null> {
  */
 export const getSupabaseConfig = getSupabaseCredentials;
 
-let cachedClient: SupabaseClient | null = null;
-let cachedCredentials: string | null = null;
+let cachedServiceClient: SupabaseClient | null = null;
+let cachedServiceCredentials: string | null = null;
 
 /**
- * Get Supabase client with service role key (admin access)
+ * Build a per-request Supabase client that carries the user's session.
+ * PostgREST sees this as the `authenticated` role so RLS policies apply.
+ */
+async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
+  const creds = await getSupabaseCredentials();
+  if (!creds) return null;
+
+  const cookieStore = await cookies();
+  return createServerClient(creds.projectUrl, creds.anonKey, {
+    cookies: {
+      getAll() { return cookieStore.getAll(); },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          try { cookieStore.set(name, value, options); } catch { /* read-only context */ }
+        });
+      },
+    },
+  });
+}
+
+/**
+ * Get Supabase client for data access.
+ *
+ * When a tenant context is active (x-tenant-id header set by middleware),
+ * returns an authenticated client so RLS filters rows by tenant_id.
+ * Otherwise returns the service-role client for admin / setup operations.
  */
 export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClient | null> {
+  const headerTenantId = await getTenantIdFromHeaders();
+
+  if (headerTenantId) {
+    const authClient = await getAuthenticatedClient();
+    if (authClient) return authClient;
+  }
+
+  // Fallback: service-role client (setup wizard, admin, no tenant context)
   const creds = await getSupabaseCredentials();
 
   if (!creds) {
@@ -50,23 +84,42 @@ export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClien
     return null;
   }
 
-  // Cache client if credentials haven't changed
   const credKey = `${creds.projectUrl}:${creds.serviceRoleKey}`;
-  if (cachedClient && cachedCredentials === credKey) {
-    return cachedClient;
+  if (cachedServiceClient && cachedServiceCredentials === credKey) {
+    return cachedServiceClient;
   }
 
-  // Create new client
-  cachedClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
+  cachedServiceClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
 
-  cachedCredentials = credKey;
+  cachedServiceCredentials = credKey;
 
-  return cachedClient;
+  return cachedServiceClient;
+}
+
+/**
+ * Get Supabase client with service role key (always bypasses RLS).
+ * Use only for operations that genuinely need admin access (publishing, setup, migrations).
+ */
+export async function getSupabaseServiceRole(): Promise<SupabaseClient | null> {
+  const creds = await getSupabaseCredentials();
+  if (!creds) return null;
+
+  const credKey = `${creds.projectUrl}:${creds.serviceRoleKey}`;
+  if (cachedServiceClient && cachedServiceCredentials === credKey) {
+    return cachedServiceClient;
+  }
+
+  cachedServiceClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  cachedServiceCredentials = credKey;
+
+  return cachedServiceClient;
 }
 
 /**
