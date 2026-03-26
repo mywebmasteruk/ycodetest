@@ -57,7 +57,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { CollectionFieldSelector, type FieldSourceType } from './CollectionFieldSelector';
 import { flattenFieldGroups, filterFieldGroupsByType, RICH_TEXT_ONLY_FIELD_TYPES, type FieldGroup } from '@/lib/collection-field-utils';
-import { DynamicVariable, getDynamicVariableLabel } from '@/lib/tiptap-extensions/dynamic-variable';
+import { buildFieldVariableData } from '@/lib/variable-format-utils';
+import { createDynamicVariableNodeView } from '@/lib/dynamic-variable-view';
 import { RichTextComponent } from '@/lib/tiptap-extensions/rich-text-component';
 import { RichTextLink, getLinkSettingsFromMark } from '@/lib/tiptap-extensions/rich-text-link';
 import { RichTextImage } from '@/lib/tiptap-extensions/rich-text-image';
@@ -120,61 +121,7 @@ export type { FieldVariable } from '@/types';
  * DynamicVariable with React node view for the sidebar rich-text editor.
  * Extends the shared extension with a Badge-based node view.
  */
-const DynamicVariableWithNodeView = DynamicVariable.extend({
-  addNodeView() {
-    return ({ node, getPos, editor }) => {
-      const container = document.createElement('span');
-      container.className = 'inline-block';
-      container.contentEditable = 'false';
-
-      const variable = node.attrs.variable;
-      if (variable) {
-        container.setAttribute('data-variable', JSON.stringify(variable));
-      }
-
-      const label = getDynamicVariableLabel(node);
-
-      const handleDelete = () => {
-        const pos = getPos();
-        if (typeof pos === 'number') {
-          editor.chain().focus().deleteRange({ from: pos, to: pos + 1 }).run();
-        }
-      };
-
-      const root = createRoot(container);
-
-      const renderBadge = () => {
-        root.render(
-          <Badge variant="secondary">
-            <span>{label}</span>
-            {editor.isEditable && (
-              <Button
-                onClick={handleDelete}
-                className="size-4! p-0! -mr-1"
-                variant="outline"
-              >
-                <Icon name="x" className="size-2" />
-              </Button>
-            )}
-          </Badge>
-        );
-      };
-
-      queueMicrotask(renderBadge);
-
-      const updateListener = () => renderBadge();
-      editor.on('update', updateListener);
-
-      return {
-        dom: container,
-        destroy: () => {
-          editor.off('update', updateListener);
-          setTimeout(() => root.unmount(), 0);
-        },
-      };
-    };
-  },
-});
+const DynamicVariableWithNodeView = createDynamicVariableNodeView('sidebar');
 
 /**
  * RichTextComponent with React node view for embedding components.
@@ -833,18 +780,8 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
 
   const handleFieldSelect = (fieldId: string, relationshipPath: string[], source?: FieldSourceType, layerId?: string) => {
     const field = fields.find(f => f.id === fieldId);
-    addFieldVariableInternal({
-      type: 'field',
-      data: {
-        field_id: fieldId,
-        relationships: relationshipPath,
-        source,
-        field_type: field?.type || null,
-        collection_layer_id: layerId,
-      },
-    });
+    addFieldVariableInternal(buildFieldVariableData(fieldId, relationshipPath, field?.type ?? null, source, layerId));
 
-    // Close the dropdown after selection
     setIsDropdownOpen(false);
   };
 

@@ -305,17 +305,16 @@ function getVariableNodeData(
   collectionItemData?: Record<string, string>,
   pageCollectionItemData?: Record<string, string>,
   layerDataMap?: Record<string, Record<string, string>>
-): { fieldType: string | null; rawValue: unknown } {
+): { fieldType: string | null; rawValue: unknown; format?: string } {
   if (node.attrs?.variable?.type === 'field' && node.attrs.variable.data?.field_id) {
-    const { field_id, field_type, relationships = [], source, collection_layer_id } = node.attrs.variable.data;
+    const { field_id, field_type, relationships = [], source, collection_layer_id, format } = node.attrs.variable.data;
 
-    // Build the full path for relationship resolution
     const fieldPath = relationships.length > 0
       ? [field_id, ...relationships].join('.')
       : field_id;
 
     const rawValue = resolveFieldFromSources(fieldPath, source, collectionItemData, pageCollectionItemData, collection_layer_id, layerDataMap);
-    return { fieldType: field_type || null, rawValue };
+    return { fieldType: field_type || null, rawValue, format };
   }
 
   return { fieldType: null, rawValue: undefined };
@@ -334,8 +333,8 @@ function resolveVariableNode(
   pageCollectionItemData?: Record<string, string>,
   timezone: string = 'UTC'
 ): string {
-  const { fieldType, rawValue } = getVariableNodeData(node, collectionItemData, pageCollectionItemData);
-  return formatFieldValue(rawValue, fieldType, timezone);
+  const { fieldType, rawValue, format } = getVariableNodeData(node, collectionItemData, pageCollectionItemData);
+  return formatFieldValue(rawValue, fieldType, timezone, format);
 }
 
 /**
@@ -538,17 +537,15 @@ function renderInlineContent(
     }
 
     if (node.type === 'dynamicVariable') {
-      const { fieldType, rawValue } = getVariableNodeData(node, collectionItemData, pageCollectionItemData, layerDataMap);
+      const { fieldType, rawValue, format } = getVariableNodeData(node, collectionItemData, pageCollectionItemData, layerDataMap);
 
       // Handle rich_text fields - render nested Tiptap content
       if (fieldType === 'rich_text' && rawValue) {
-        // Parse JSON string if needed (published pages store as string)
         let richTextValue: unknown = rawValue;
         if (typeof rawValue === 'string') {
           try {
             richTextValue = JSON.parse(rawValue);
           } catch {
-            // If parsing fails, fall through to text rendering
             richTextValue = null;
           }
         }
@@ -571,8 +568,8 @@ function renderInlineContent(
         }
       }
 
-      // For other field types, render as text
-      const value = formatFieldValue(rawValue, fieldType, timezone);
+      // For other field types, render as text with optional format
+      const value = formatFieldValue(rawValue, fieldType, timezone, format);
       const textNode = {
         type: 'text',
         text: value,
