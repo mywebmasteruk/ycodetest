@@ -92,7 +92,7 @@ export function castValue(value: string | null, type: CollectionFieldType): any 
       return value === 'true' || value === '1' || value === 'yes';
 
     case 'date':
-      // Return as ISO string for consistency
+    case 'date_only':
       return value;
 
     case 'reference':
@@ -161,7 +161,7 @@ export function valueToString(value: any, type: CollectionFieldType): string | n
       return String(value);
 
     case 'date':
-      // Expect ISO string or Date object
+    case 'date_only':
       if (value instanceof Date) {
         return value.toISOString();
       }

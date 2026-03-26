@@ -6,6 +6,7 @@
  */
 
 import type { CollectionField, InlineVariable } from '@/types';
+import { isDateFieldType } from '@/lib/collection-field-utils';
 import { formatDateInTimezone } from '@/lib/date-format-utils';
 import { extractPlainTextFromTiptap } from '@/lib/tiptap-utils';
 import { formatDateWithPreset, formatNumberWithPreset } from '@/lib/variable-format-utils';
@@ -43,7 +44,7 @@ export function formatFieldValue(
   }
 
   // Handle date fields with optional format preset
-  if (fieldType === 'date' && typeof value === 'string') {
+  if (isDateFieldType(fieldType) && typeof value === 'string') {
     if (format) {
       return formatDateWithPreset(value, format, timezone);
     }

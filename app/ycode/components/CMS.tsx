@@ -30,13 +30,13 @@ import { useLiveCollectionUpdates } from '@/hooks/use-live-collection-updates';
 import { useResourceLock } from '@/hooks/use-resource-lock';
 import { collectionsApi } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
-import { formatDateInTimezone } from '@/lib/date-format-utils';
+import { formatDateInTimezone, formatDateOnly } from '@/lib/date-format-utils';
 import { toast } from 'sonner';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { slugify, isTruthyBooleanValue, parseMultiReferenceValue } from '@/lib/collection-utils';
 import { getSampleCollectionOptions } from '@/lib/sample-collections';
 import { ASSET_CATEGORIES, getOptimizedImageUrl, isAssetOfType } from '@/lib/asset-utils';
-import { type FieldType, findDisplayField, getItemDisplayName, getFieldIcon, isMultipleAssetField, findStatusFieldId } from '@/lib/collection-field-utils';
+import { type FieldType, findDisplayField, getItemDisplayName, getFieldIcon, isMultipleAssetField, findStatusFieldId, isDateFieldType } from '@/lib/collection-field-utils';
 import { CollectionStatusPill, parseStatusValue } from './CollectionStatusPill';
 import { extractPlainTextFromTiptap } from '@/lib/tiptap-utils';
 import { parseCollectionLinkValue, resolveCollectionLinkValue } from '@/lib/link-utils';
@@ -1613,7 +1613,10 @@ const CMS = React.memo(function CMS() {
                       const value = item.values[field.id];
 
                       // Format date fields in user's timezone
-                      if (field.type === 'date' && value) {
+                      if (isDateFieldType(field.type) && value) {
+                        const displayValue = field.type === 'date_only'
+                          ? formatDateOnly(value)
+                          : formatDateInTimezone(value, timezone, 'display');
                         return (
                           <td
                             key={field.id}
@@ -1621,7 +1624,7 @@ const CMS = React.memo(function CMS() {
                             onClick={() => handleEditItem(item)}
                           >
                             <span className="line-clamp-1 truncate">
-                              {formatDateInTimezone(value, timezone, 'display')}
+                              {displayValue}
                             </span>
                           </td>
                         );

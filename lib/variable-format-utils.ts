@@ -6,6 +6,7 @@
  */
 
 import type { CollectionFieldType } from '@/types';
+import { isDateFieldType } from '@/lib/collection-field-utils';
 
 // ─── Date Format Presets ────────────────────────────────────────────
 
@@ -123,6 +124,10 @@ export const DATE_FORMAT_SECTIONS: FormatPresetSection<DateFormatPreset>[] = [
   },
 ];
 
+/** Sections for date_only fields (excludes datetime and time presets) */
+export const DATE_ONLY_FORMAT_SECTIONS: FormatPresetSection<DateFormatPreset>[] =
+  DATE_FORMAT_SECTIONS.filter(s => s.title === 'Date');
+
 /** Flat list of all date presets (used for lookup by ID) */
 export const DATE_FORMAT_PRESETS: DateFormatPreset[] =
   DATE_FORMAT_SECTIONS.flatMap(s => s.presets);
@@ -214,7 +219,7 @@ const numberPresetMap = new Map(NUMBER_FORMAT_PRESETS.map(p => [p.id, p]));
 
 /** Check whether a field type supports format selection */
 export function isFormattableFieldType(fieldType: string | null | undefined): boolean {
-  return fieldType === 'date' || fieldType === 'number';
+  return isDateFieldType(fieldType) || fieldType === 'number';
 }
 
 /** Get format preset sections for a field type (grouped with titles) */
@@ -222,13 +227,14 @@ export function getFormatSectionsForFieldType(
   fieldType: string | null | undefined
 ): FormatPresetSection<DateFormatPreset | NumberFormatPreset>[] {
   if (fieldType === 'date') return DATE_FORMAT_SECTIONS;
+  if (fieldType === 'date_only') return DATE_ONLY_FORMAT_SECTIONS;
   if (fieldType === 'number') return NUMBER_FORMAT_SECTIONS;
   return [];
 }
 
 /** Get the default format ID for a field type */
 export function getDefaultFormatId(fieldType: string | null | undefined): string | undefined {
-  if (fieldType === 'date') return 'date-long';
+  if (isDateFieldType(fieldType)) return 'date-long';
   if (fieldType === 'number') return 'number-integer';
   return undefined;
 }

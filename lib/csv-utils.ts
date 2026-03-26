@@ -368,8 +368,8 @@ export function convertValueForFieldType(
       return null;
     }
 
-    case 'date': {
-      // Try to parse as date
+    case 'date':
+    case 'date_only': {
       const date = new Date(trimmedValue);
       if (isNaN(date.getTime())) {
         return null;
@@ -463,7 +463,8 @@ export function getFieldTypeLabel(type: CollectionFieldType): string {
     text: 'Text',
     number: 'Number',
     boolean: 'Boolean',
-    date: 'Date',
+    date: 'Date & Time',
+    date_only: 'Date',
     color: 'Color',
     reference: 'Reference',
     multi_reference: 'Multi Reference',
