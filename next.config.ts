@@ -54,12 +54,12 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Root HTML: avoid caching an empty homepage shell for a year (DB can gain a page later).
+        // Root HTML: never cache at shared caches — homepage layers change in Supabase without redeploy.
         source: '/',
         headers: [
           {
             key: 'Cache-Control',
-            value: 'public, max-age=0, s-maxage=120, stale-while-revalidate=600',
+            value: 'private, no-cache, no-store, max-age=0, must-revalidate',
           },
         ],
       },

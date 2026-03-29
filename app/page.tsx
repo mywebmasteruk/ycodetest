@@ -6,6 +6,7 @@ import PasswordForm from '@/components/PasswordForm';
 import { generatePageMetadata, fetchGlobalPageSettings } from '@/lib/generate-page-metadata';
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
 import type { Metadata } from 'next';
+import { connection } from 'next/server';
 
 // Root must stay dynamic: a cold DB / post-seed homepage must not be stuck behind
 // an empty unstable_cache entry or year-long CDN HTML from the first miss.
@@ -72,7 +73,7 @@ async function fetchCachedErrorPage(errorCode: 401) {
 }
 
 export default async function Home() {
-  // Cache-first homepage path; pagination is served through internal dynamic routes.
+  await connection();
   const data = await fetchPublishedHomepage();
 
   // If no published homepage exists, show default landing page
