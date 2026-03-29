@@ -7,31 +7,20 @@ import { generatePageMetadata, fetchGlobalPageSettings } from '@/lib/generate-pa
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
 import type { Metadata } from 'next';
 
-// Static by default for performance, dynamic only when pagination is requested
-export const revalidate = false; // Cache indefinitely until publish invalidates
+// Root must stay dynamic: a cold DB / post-seed homepage must not be stuck behind
+// an empty unstable_cache entry or year-long CDN HTML from the first miss.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 /**
- * Fetch homepage data from database
- * Cached with tag-based revalidation (no time-based stale cache)
+ * Fetch published homepage (uncached). Publish flow still calls revalidateTag for
+ * other cached segments; this path always reflects current Supabase state.
  */
 async function fetchPublishedHomepage() {
   try {
-    return await unstable_cache(
-      async () => fetchHomepage(true),
-      ['data-for-route-/'],
-      {
-        tags: ['all-pages', 'route-/'], // all-pages for full publish invalidation, route-/ for targeted
-        revalidate: false,
-      }
-    )();
+    return await fetchHomepage(true);
   } catch {
-    // Fallback to uncached fetch when data exceeds cache size limit (2MB).
-    // If runtime credentials are unavailable (e.g. build-time), return null.
-    try {
-      return await fetchHomepage(true);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -213,13 +202,9 @@ export async function generateMetadata(): Promise<Metadata> {
     }
   }
 
-  return unstable_cache(
-    async () => generatePageMetadata(data.page, {
-      fallbackTitle: 'Home',
-      pagePath: '/',
-      globalSeoSettings: globalSettings,
-    }),
-    ['data-for-route-/-meta'],
-    { tags: ['all-pages', 'route-/'], revalidate: false }
-  )();
+  return generatePageMetadata(data.page, {
+    fallbackTitle: 'Home',
+    pagePath: '/',
+    globalSeoSettings: globalSettings,
+  });
 }

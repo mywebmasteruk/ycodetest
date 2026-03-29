@@ -54,6 +54,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Root HTML: avoid caching an empty homepage shell for a year (DB can gain a page later).
+        source: '/',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=0, s-maxage=120, stale-while-revalidate=600',
+          },
+        ],
+      },
+      {
         // Apply to public pages ONLY (exclude /ycode/*, /_next/*, /a/*)
         source: '/:path((?!ycode|_next|a/).*)*',
         headers: [
