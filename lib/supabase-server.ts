@@ -204,6 +204,21 @@ export async function getTenantIdFromHeaders(): Promise<string | null> {
 }
 
 /**
+ * Tenant row scope for SSR: explicit arg, middleware `x-tenant-id`, then env fallbacks
+ * (single-tenant / template builds without a subdomain).
+ */
+export async function resolveTenantScope(explicitTenantId?: string | null): Promise<string | null> {
+  if (explicitTenantId) return explicitTenantId;
+  const fromHeader = await getTenantIdFromHeaders();
+  if (fromHeader) return fromHeader;
+  const fromEnv =
+    process.env.TENANT_ID?.trim() ||
+    process.env.NEXT_PUBLIC_TENANT_ID?.trim() ||
+    process.env.TEMPLATE_TENANT_ID?.trim();
+  return fromEnv || null;
+}
+
+/**
  * Defense-in-depth: when tenant context exists, narrow PostgREST queries to `tenant_id`.
  * Use on tables that have a `tenant_id` column so listings stay correct even if the
  * client falls back to the service role (RLS bypass).
