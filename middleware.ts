@@ -1,11 +1,16 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import {
+  extractSubdomain,
+  isPublicApiRoute,
+  getSupabaseEnvConfig,
+  isPublicPage,
+} from '@/lib/tenant/middleware-utils';
+import { supabaseCookieOptionsForHost } from '@/lib/supabase-cookie-domain';
 
 // ── Multi-tenant subdomain resolution ───────────────────────────────────────
 
-/** `manage` is the master demo builder host — resolved via MASTER_TENANT_ID, not reserved. */
-const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'mail', 'ftp']);
 const TENANT_DOMAIN_SUFFIX = process.env.TENANT_DOMAIN_SUFFIX || '';
 
 /** Subdomain for the template / demo editor (default: manage). */
@@ -50,77 +55,6 @@ async function lookupTenant(
   }
 }
 
-function extractSubdomain(host: string): string | null {
-  if (!TENANT_DOMAIN_SUFFIX) return null;
-  const lower = host.toLowerCase().replace(/:\d+$/, '');
-  if (!lower.endsWith(`.${TENANT_DOMAIN_SUFFIX}`)) return null;
-  const sub = lower.slice(0, -(TENANT_DOMAIN_SUFFIX.length + 1));
-  if (!sub || sub.includes('.') || RESERVED_SUBDOMAINS.has(sub)) return null;
-  return sub;
-}
-
-// ── Existing auth / routing logic ───────────────────────────────────────────
-
-/**
- * Public API routes that skip authentication.
- */
-const PUBLIC_API_PREFIXES = [
-  '/ycode/api/setup/',    // Setup wizard — needed before any user exists
-  '/ycode/api/supabase/', // Supabase config — needed for browser client init
-  '/ycode/api/auth/',     // Auth callbacks and session checks
-  '/ycode/api/v1/',       // Public API — has own API key auth
-];
-
-/**
- * Patterns for collection item endpoints that must be accessible on published pages
- * (load-more pagination, filter). Matched via regex since the collection ID is dynamic.
- */
-const PUBLIC_COLLECTION_ITEM_SUFFIXES = ['/items/filter', '/items/load-more'];
-
-const PUBLIC_API_EXACT = [
-  '/ycode/api/revalidate', // Cache revalidation — has own secret token auth
-];
-
-/**
- * Derive the Supabase project URL and anon key from environment variables.
- * Returns null if env vars are not set (pre-setup or local dev without .env.local).
- */
-function getSupabaseEnvConfig(): { url: string; anonKey: string } | null {
-  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY
-    || process.env.SUPABASE_ANON_KEY;
-  const connectionUrl = process.env.SUPABASE_CONNECTION_URL;
-
-  if (!anonKey || !connectionUrl) return null;
-
-  // Extract project ID from connection URL
-  // e.g. "postgresql://postgres.abc123:..." → "abc123"
-  const match = connectionUrl.match(/\/\/postgres\.([a-z0-9]+):/);
-  if (!match) return null;
-
-  return {
-    url: `https://${match[1]}.supabase.co`,
-    anonKey,
-  };
-}
-
-function isPublicApiRoute(pathname: string, method: string): boolean {
-  // POST to form-submissions is public (website visitors submitting forms)
-  if (pathname === '/ycode/api/form-submissions' && method === 'POST') {
-    return true;
-  }
-
-  if (PUBLIC_API_EXACT.includes(pathname)) return true;
-  if (PUBLIC_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
-
-  // Collection item endpoints for published pages (POST only — filter, load-more)
-  if (method === 'POST' && pathname.startsWith('/ycode/api/collections/') &&
-      PUBLIC_COLLECTION_ITEM_SUFFIXES.some(suffix => pathname.endsWith(suffix))) {
-    return true;
-  }
-
-  return false;
-}
-
 /**
  * Verify Supabase session for protected API routes.
  * Returns a 401 response if not authenticated, or null to continue.
@@ -137,6 +71,9 @@ async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null>
 
   let response = NextResponse.next({ request });
 
+  const authHost = request.headers.get('host') || '';
+  const cookieOpts = supabaseCookieOptionsForHost(authHost, TENANT_DOMAIN_SUFFIX);
+
   const supabase = createServerClient(config.url, config.anonKey, {
     cookies: {
       getAll() {
@@ -152,6 +89,7 @@ async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null>
         });
       },
     },
+    ...(cookieOpts ? { cookieOptions: cookieOpts } : {}),
   });
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -166,12 +104,12 @@ async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null>
   return null;
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ── Tenant subdomain resolution ──
   const host = request.headers.get('host') || '';
-  const subdomain = extractSubdomain(host);
+  const subdomain = extractSubdomain(host, TENANT_DOMAIN_SUFFIX);
 
   const provisioningSecret = process.env.PROVISIONING_WEBHOOK_SECRET;
   const isProvisionPublish =
@@ -182,10 +120,7 @@ export async function proxy(request: NextRequest) {
 
   if (subdomain) {
     if (subdomain === MASTER_BUILDER_SUBDOMAIN) {
-      const masterId =
-        process.env.MASTER_TENANT_ID?.trim() ||
-        process.env.TEMPLATE_TENANT_ID?.trim() ||
-        process.env.NEXT_PUBLIC_MASTER_TENANT_ID?.trim();
+      const masterId = process.env.TEMPLATE_TENANT_ID?.trim();
       if (masterId) {
         request.headers.set('x-tenant-id', masterId);
         request.headers.set('x-tenant-slug', MASTER_BUILDER_SUBDOMAIN);
@@ -193,7 +128,7 @@ export async function proxy(request: NextRequest) {
         const tenant = await lookupTenant(subdomain, isProvisionPublish);
         if (!tenant) {
           return new NextResponse(
-            'Master builder: set MASTER_TENANT_ID (template tenant UUID) or add tenant_registry slug "manage".',
+            'Master builder: set TEMPLATE_TENANT_ID (template tenant UUID) or add an active tenant_registry row for the demo slug (e.g. masjidemo1).',
             { status: 503 },
           );
         }
@@ -208,16 +143,28 @@ export async function proxy(request: NextRequest) {
       request.headers.set('x-tenant-id', tenant.id);
       request.headers.set('x-tenant-slug', tenant.slug);
     }
+  } else if (isProvisionPublish) {
+    // Provisioning publish via internal URL — resolve tenant from X-Tenant-Slug header
+    const slugHeader = request.headers.get('x-tenant-slug');
+    if (slugHeader) {
+      const tenant = await lookupTenant(slugHeader, true);
+      if (tenant) {
+        request.headers.set('x-tenant-id', tenant.id);
+        request.headers.set('x-tenant-slug', tenant.slug);
+      }
+    }
   } else if (pathname.startsWith('/ycode')) {
-    // Editor on the manage subdomain: resolve tenant from the user's JWT
+    // Editor on apex / non-tenant host: resolve tenant from the user's JWT
     const sbConfig = getSupabaseEnvConfig();
     if (sbConfig) {
       try {
+        const apexCookieOpts = supabaseCookieOptionsForHost(host, TENANT_DOMAIN_SUFFIX);
         const supabase = createServerClient(sbConfig.url, sbConfig.anonKey, {
           cookies: {
             getAll() { return request.cookies.getAll(); },
             setAll() { /* read-only in middleware */ },
           },
+          ...(apexCookieOpts ? { cookieOptions: apexCookieOpts } : {}),
         });
         const { data: { user } } = await supabase.auth.getUser();
         const tid = user?.user_metadata?.tenant_id;
@@ -242,14 +189,10 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const isPublicPage = !pathname.startsWith('/ycode')
-    && !pathname.startsWith('/_next')
-    && !pathname.startsWith('/api')
-    && !pathname.startsWith('/dynamic');
   const hasPaginationParams = Array.from(request.nextUrl.searchParams.keys())
     .some((key) => key.startsWith('p_'));
 
-  if (isPublicPage && hasPaginationParams) {
+  if (isPublicPage(pathname) && hasPaginationParams) {
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname = pathname === '/' ? '/dynamic' : `/dynamic${pathname}`;
 

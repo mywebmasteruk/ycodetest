@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { headers, cookies } from 'next/headers';
 import { credentials } from './credentials';
 import { parseSupabaseConfig } from './supabase-config-parser';
+import { supabaseCookieOptionsForHost } from './supabase-cookie-domain';
 import type { SupabaseConfig, SupabaseCredentials } from '@/types';
 
 /**
@@ -49,6 +50,12 @@ async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
   if (!creds) return null;
 
   const cookieStore = await cookies();
+  const host = (await headers()).get('host') || '';
+  const cookieOpts = supabaseCookieOptionsForHost(
+    host,
+    process.env.TENANT_DOMAIN_SUFFIX || process.env.NEXT_PUBLIC_TENANT_DOMAIN_SUFFIX,
+  );
+
   return createServerClient(creds.projectUrl, creds.anonKey, {
     cookies: {
       getAll() { return cookieStore.getAll(); },
@@ -58,6 +65,7 @@ async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
         });
       },
     },
+    ...(cookieOpts ? { cookieOptions: cookieOpts } : {}),
   });
 }
 
