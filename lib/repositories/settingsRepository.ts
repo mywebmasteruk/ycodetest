@@ -80,10 +80,16 @@ export async function getSettingsByKeys(keys: string[]): Promise<Record<string, 
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const { data, error } = await client
+  const tid = await getTenantIdFromHeaders();
+
+  let query = client
     .from('settings')
     .select('key, value')
     .in('key', keys);
+
+  query = scopeToTenantRow(query, tid);
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`Failed to fetch settings: ${error.message}`);
@@ -115,9 +121,10 @@ export async function setSetting(key: string, value: any): Promise<Setting> {
     .upsert({
       key,
       value,
+      tenant_id: await getTenantIdFromHeaders(),
       updated_at: new Date().toISOString(),
     }, {
-      onConflict: 'key',
+      onConflict: 'tenant_id,key',
     })
     .select()
     .single();
@@ -174,16 +181,18 @@ export async function setSettings(settings: Record<string, any>): Promise<number
   // Upsert settings with non-null values
   if (toUpsert.length > 0) {
     const now = new Date().toISOString();
+    const tid = await getTenantIdFromHeaders();
     const records = toUpsert.map(([key, value]) => ({
       key,
       value,
+      tenant_id: tid,
       updated_at: now,
     }));
 
     const { error } = await client
       .from('settings')
       .upsert(records, {
-        onConflict: 'key',
+        onConflict: 'tenant_id,key',
       });
 
     if (error) {

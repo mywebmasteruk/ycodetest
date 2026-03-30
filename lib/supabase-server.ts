@@ -83,7 +83,12 @@ async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
  * Service role is used only when there is no session (setup wizard, migrations).
  */
 export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClient | null> {
-  const authClient = await getAuthenticatedClient();
+  let authClient: SupabaseClient | null = null;
+  try {
+    authClient = await getAuthenticatedClient();
+  } catch {
+    // cookies()/headers() throw inside unstable_cache or other non-request contexts
+  }
   if (authClient) {
     const {
       data: { user },
