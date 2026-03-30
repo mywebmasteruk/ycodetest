@@ -5,15 +5,17 @@ import {
   resolveTenantScope,
   scopeToTenantRow,
 } from '@/lib/supabase-server';
-import { buildSlugPath, buildDynamicPageUrl, detectLocaleFromPath, matchPageWithTranslatedSlugs, matchDynamicPageWithTranslatedSlugs } from '@/lib/page-utils';
+import { buildSlugPath, buildDynamicPageUrl, buildLocalizedSlugPath, buildLocalizedDynamicPageUrl, detectLocaleFromPath, matchPageWithTranslatedSlugs, matchDynamicPageWithTranslatedSlugs } from '@/lib/page-utils';
 import { getItemWithValues, getItemsWithValues, getItemIdsByFieldValue } from '@/lib/repositories/collectionItemRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
 import type { Page, PageFolder, PageLayers, Component, ComponentVariable, CollectionItemWithValues, CollectionField, Layer, CollectionPaginationMeta, Translation, Locale } from '@/types';
-import { getCollectionVariable, resolveFieldValue, evaluateVisibility } from '@/lib/layer-utils';
-import { isFieldVariable, createDynamicTextVariable, createDynamicRichTextVariable, createAssetVariable, getDynamicTextContent, resolveDesignStyles } from '@/lib/variable-utils';
-import { getAssetProxyUrl } from '@/lib/asset-utils';
+import { getCollectionVariable, resolveFieldValue, evaluateVisibility, getLayerHtmlTag, filterDisabledSliderLayers } from '@/lib/layer-utils';
+import { isFieldVariable, isAssetVariable, createDynamicTextVariable, createDynamicRichTextVariable, createAssetVariable, getDynamicTextContent, getVariableStringValue, getAssetId, resolveDesignStyles } from '@/lib/variable-utils';
+import { generateImageSrcset, getImageSizes, getOptimizedImageUrl, getAssetProxyUrl, DEFAULT_ASSETS, collectLayerAssetIds } from '@/lib/asset-utils';
 import { resolveComponents, applyComponentOverrides } from '@/lib/resolve-components';
 import { isTiptapDoc, hasBlockElementsWithResolver } from '@/lib/tiptap-utils';
+import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
+
 // Pagination context passed through to resolveCollectionLayers
 export interface PaginationContext {
   // Map of layerId -> page number (defaults to 1 if not specified)
@@ -22,18 +24,22 @@ export interface PaginationContext {
   defaultPage?: number;
 }
 
-import { resolveInlineVariables } from '@/lib/inline-variables';
+import { resolveFieldLinkValue, resolveRefCollectionItemId, generateLinkHref } from '@/lib/link-utils';
+import type { LinkResolutionContext } from '@/lib/link-utils';
+import { getLinkSettingsFromMark } from '@/lib/tiptap-extensions/rich-text-link';
+import { SWIPER_CLASS_MAP, SWIPER_DATA_ATTR_MAP } from '@/lib/templates/utilities';
+import { resolveInlineVariables, resolveInlineVariablesFromData } from '@/lib/inline-variables';
+import { formatFieldValue } from '@/lib/cms-variables-utils';
 import { buildLayerTranslationKey, getTranslationByKey, hasValidTranslationValue, getTranslationValue } from '@/lib/localisation-utils';
 import { formatDateFieldsInItemValues } from '@/lib/date-format-utils';
 import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import { parseMultiAssetFieldValue, buildAssetVirtualValues } from '@/lib/multi-asset-utils';
 import { parseMultiReferenceValue } from '@/lib/collection-utils';
+import { combineBgValues, mergeStaticBgVars } from '@/lib/tailwind-class-mapper';
 import { getAssetsByIds } from '@/lib/repositories/assetRepository';
 import { isVirtualAssetField, findDisplayField } from '@/lib/collection-field-utils';
-import type { FieldVariable, AssetVariable, DynamicTextVariable } from '@/types';
+import type { FieldVariable, AssetVariable, DynamicTextVariable, LinkSettings } from '@/types';
 import type { DesignColorVariable } from '@/types';
-import { resolveAllAssets } from '@/lib/layer-asset-resolve';
-import { buildAnchorMap, layerToHtml } from '@/lib/layer-html';
 
 /**
  * Create the appropriate variable for an asset field value.
@@ -305,12 +311,7 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
     // try to fetch the homepage
     if (targetPath === '' && detectedLocale) {
       // Pass preloaded components to avoid redundant query
-      const homepageData = await fetchHomepage(
-        isPublished,
-        paginationContext,
-        components,
-        tenantId,
-      );
+      const homepageData = await fetchHomepage(isPublished, paginationContext, components);
       if (homepageData) {
         // Components and collection layers are already resolved by fetchHomepage
         // Apply translations for the detected locale
@@ -434,6 +435,7 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
 
             // Format date fields in user's timezone
             const timezone = (await getSettingByKey('timezone') as string | null) || 'UTC';
+            const rawItemValues = { ...enhancedItemValues };
             enhancedItemValues = formatDateFieldsInItemValues(enhancedItemValues, collectionFields, timezone);
 
             // Create enhanced collection item with resolved reference values and translations
@@ -449,7 +451,7 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
             // This resolves inline variables like "Name → Location" on the page
             const layersWithInjectedData = await Promise.all(
               layersWithComponents.map((layer: Layer) =>
-                injectCollectionData(layer, enhancedItemValues, collectionFields, isPublished)
+                injectCollectionData(layer, enhancedItemValues, collectionFields, isPublished, undefined, rawItemValues, timezone)
               )
             );
 
@@ -672,22 +674,20 @@ export const fetchHomepage = cache(async function fetchHomepage(
       .eq('is_index', true)
       .is('page_folder_id', null)
       .eq('is_published', isPublished)
-      .is('deleted_at', null);
+      .is('deleted_at', null)
+      .limit(1);
     pagesQ = scopeToTenantRow(pagesQ, resolvedTenant);
 
-    // Fetch locales, homepage row, and components in parallel
-    const [{ data: availableLocales }, homeRes, componentsResult] = await Promise.all([
+    const [localesRes, homeRes, componentsResult] = await Promise.all([
       localesQ,
-      pagesQ.limit(1).maybeSingle(),
-      preloadedComponents
-        ? Promise.resolve(preloadedComponents)
-        : fetchComponents(supabase, isPublished, resolvedTenant),
+      pagesQ.maybeSingle(),
+      preloadedComponents ? Promise.resolve(preloadedComponents) : fetchComponents(supabase, isPublished, resolvedTenant),
     ]);
 
+    const availableLocales = localesRes.data;
     const homepage = homeRes.data;
-    const homeErr = homeRes.error;
 
-    if (homeErr || !homepage) {
+    if (!homepage) {
       return null;
     }
 
@@ -1009,6 +1009,7 @@ async function resolveReferenceFields(
  * @param fields - Optional collection fields (for reference field resolution)
  * @param isPublished - Whether fetching published data
  * @param layerDataMap - Map of layer ID → item data for layer-specific resolution
+ * @param rawItemValues - Unformatted values (ISO dates) for applying custom format presets
  * @returns Layer with resolved field values
  */
 async function injectCollectionData(
@@ -1016,7 +1017,9 @@ async function injectCollectionData(
   itemValues: Record<string, string>,
   fields?: CollectionField[],
   isPublished: boolean = true,
-  layerDataMap?: Record<string, Record<string, string>>
+  layerDataMap?: Record<string, Record<string, string>>,
+  rawItemValues?: Record<string, string>,
+  timezone: string = 'UTC'
 ): Promise<Layer> {
   // Resolve reference fields if we have field definitions
   let enhancedValues = itemValues;
@@ -1025,6 +1028,8 @@ async function injectCollectionData(
   }
 
   const updates: Partial<Layer> = {};
+  // Start with all original variables; each section overwrites only its own key
+  const resolvedVars: Record<string, unknown> = { ...layer.variables };
 
   // Resolve inline variables in text content
   const textVariable = layer.variables?.text;
@@ -1033,8 +1038,6 @@ async function injectCollectionData(
   if (textVariable && textVariable.type === 'dynamic_rich_text') {
     const content = textVariable.data.content;
     if (content && typeof content === 'object') {
-      // Check if content contains block elements (lists) from inline variables
-      // If so, change restrictive tags (p, h1-h6, etc.) to div
       const restrictiveBlockTags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'button'];
       const currentTag = layer.settings?.tag || layer.name || 'div';
       if (restrictiveBlockTags.includes(currentTag) &&
@@ -1045,13 +1048,10 @@ async function injectCollectionData(
         };
       }
 
-      const resolvedContent = resolveRichTextVariables(content, enhancedValues, layerDataMap);
-      updates.variables = {
-        ...layer.variables,
-        text: {
-          type: 'dynamic_rich_text',
-          data: { content: resolvedContent }
-        }
+      const resolvedContent = resolveRichTextVariables(content, enhancedValues, layerDataMap, rawItemValues, timezone);
+      resolvedVars.text = {
+        type: 'dynamic_rich_text',
+        data: { content: resolvedContent },
       };
     }
   }
@@ -1071,14 +1071,11 @@ async function injectCollectionData(
         content_hash: null,
         values: enhancedValues,
       };
-      const resolved = resolveInlineVariablesWithRelationships(textContent, mockItem);
+      const resolved = resolveInlineVariablesWithRelationships(textContent, mockItem, timezone);
 
-      updates.variables = {
-        ...layer.variables,
-        text: {
-          type: 'dynamic_text',
-          data: { content: resolved }
-        }
+      resolvedVars.text = {
+        type: 'dynamic_text',
+        data: { content: resolved },
       };
     }
   }
@@ -1087,13 +1084,9 @@ async function injectCollectionData(
   const imageSrc = layer.variables?.image?.src;
   if (imageSrc && isFieldVariable(imageSrc) && imageSrc.data.field_id) {
     const resolvedValue = resolveFieldValueWithRelationships(imageSrc, enhancedValues, layerDataMap);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      image: {
-        src: createResolvedAssetVariable(imageSrc.data.field_id, resolvedValue, imageSrc),
-        alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
-      },
+    resolvedVars.image = {
+      src: createResolvedAssetVariable(imageSrc.data.field_id, resolvedValue, imageSrc),
+      alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
     };
   }
 
@@ -1101,13 +1094,9 @@ async function injectCollectionData(
   const videoSrc = layer.variables?.video?.src;
   if (videoSrc && isFieldVariable(videoSrc) && videoSrc.data.field_id) {
     const resolvedValue = resolveFieldValueWithRelationships(videoSrc, enhancedValues, layerDataMap);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      video: {
-        ...layer.variables?.video,
-        src: createResolvedAssetVariable(videoSrc.data.field_id, resolvedValue, videoSrc),
-      },
+    resolvedVars.video = {
+      ...layer.variables?.video,
+      src: createResolvedAssetVariable(videoSrc.data.field_id, resolvedValue, videoSrc),
     };
   }
 
@@ -1115,13 +1104,9 @@ async function injectCollectionData(
   const audioSrc = layer.variables?.audio?.src;
   if (audioSrc && isFieldVariable(audioSrc) && audioSrc.data.field_id) {
     const resolvedValue = resolveFieldValueWithRelationships(audioSrc, enhancedValues, layerDataMap);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      audio: {
-        ...layer.variables?.audio,
-        src: createResolvedAssetVariable(audioSrc.data.field_id, resolvedValue, audioSrc),
-      },
+    resolvedVars.audio = {
+      ...layer.variables?.audio,
+      src: createResolvedAssetVariable(audioSrc.data.field_id, resolvedValue, audioSrc),
     };
   }
 
@@ -1129,12 +1114,8 @@ async function injectCollectionData(
   const bgImageSrc = layer.variables?.backgroundImage?.src;
   if (bgImageSrc && isFieldVariable(bgImageSrc) && bgImageSrc.data.field_id) {
     const resolvedValue = resolveFieldValueWithRelationships(bgImageSrc, enhancedValues, layerDataMap);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      backgroundImage: {
-        src: createResolvedAssetVariable(bgImageSrc.data.field_id, resolvedValue, bgImageSrc),
-      },
+    resolvedVars.backgroundImage = {
+      src: createResolvedAssetVariable(bgImageSrc.data.field_id, resolvedValue, bgImageSrc),
     };
   }
 
@@ -1175,6 +1156,9 @@ async function injectCollectionData(
     }
   }
 
+  // Assign all resolved variables
+  updates.variables = resolvedVars as Layer['variables'];
+
   // Recursively process children, but SKIP collection layers
   // Collection layers will be processed by resolveCollectionLayers with their own item data
   if (layer.children) {
@@ -1184,7 +1168,7 @@ async function injectCollectionData(
         if (child.variables?.collection?.id) {
           return Promise.resolve(child);
         }
-        return injectCollectionData(child, enhancedValues, fields, isPublished, layerDataMap);
+        return injectCollectionData(child, enhancedValues, fields, isPublished, layerDataMap, rawItemValues, timezone);
       })
     );
     updates.children = resolvedChildren;
@@ -1202,7 +1186,8 @@ async function injectCollectionData(
  */
 function resolveInlineVariablesWithRelationships(
   text: string,
-  collectionItem: CollectionItemWithValues
+  collectionItem: CollectionItemWithValues,
+  timezone: string = 'UTC'
 ): string {
   if (!collectionItem || !collectionItem.values) {
     return text;
@@ -1218,14 +1203,14 @@ function resolveInlineVariablesWithRelationships(
         const relationships = parsed.data.relationships || [];
 
         // Build the full path for relationship resolution
-        if (relationships.length > 0) {
-          const fullPath = [fieldId, ...relationships].join('.');
-          const fieldValue = collectionItem.values[fullPath];
-          return fieldValue || '';
-        }
+        const fullPath = relationships.length > 0
+          ? [fieldId, ...relationships].join('.')
+          : fieldId;
 
-        // Simple field lookup
-        const fieldValue = collectionItem.values[fieldId];
+        const fieldValue = collectionItem.values[fullPath];
+        if (parsed.data.format && fieldValue) {
+          return formatFieldValue(fieldValue, parsed.data.field_type, timezone, parsed.data.format);
+        }
         return fieldValue || '';
       }
     } catch {
@@ -1288,11 +1273,14 @@ function hasBlockElementsInInlineVariables(
  * Traverses the content tree and replaces variable nodes with resolved text
  * For rich_text fields, inline the nested Tiptap content
  * @param layerDataMap - Optional map of layer ID → item data for layer-specific resolution
+ * @param rawItemValues - Unformatted values (ISO dates) for applying custom format presets
  */
 function resolveRichTextVariables(
   content: any,
   itemValues: Record<string, string>,
-  layerDataMap?: Record<string, Record<string, string>>
+  layerDataMap?: Record<string, Record<string, string>>,
+  rawItemValues?: Record<string, string>,
+  timezone: string = 'UTC'
 ): any {
   if (!content || typeof content !== 'object') {
     return content;
@@ -1323,7 +1311,7 @@ function resolveRichTextVariables(
       // Handle rich_text fields - preserve block structure for proper rendering
       if (fieldType === 'rich_text' && isTiptapDoc(value)) {
         const resolvedBlocks = value.content.map((block: any) =>
-          resolveRichTextVariables(block, itemValues, layerDataMap)
+          resolveRichTextVariables(block, itemValues, layerDataMap, rawItemValues, timezone)
         );
         return resolvedBlocks.flat();
       }
@@ -1337,10 +1325,20 @@ function resolveRichTextVariables(
         };
       }
 
-      // For other field types, convert to string
-      const textValue = value != null ? String(value) : '';
+      // Apply custom format using raw (unformatted) values when available
+      // Date values in itemValues are pre-formatted by formatDateFieldsInItemValues,
+      // so custom format presets need the original ISO string from rawItemValues
+      const format = variable.data.format;
+      let textValue: string;
+      if (format && rawItemValues) {
+        const rawValue = rawItemValues[fullPath];
+        textValue = rawValue != null
+          ? formatFieldValue(rawValue, fieldType, timezone, format)
+          : (value != null ? String(value) : '');
+      } else {
+        textValue = value != null ? String(value) : '';
+      }
 
-      // Replace variable node with text node, preserving marks (bold, italic, etc.)
       return {
         type: 'text',
         text: textValue,
@@ -1354,7 +1352,7 @@ function resolveRichTextVariables(
   if (Array.isArray(content)) {
     // Flatten arrays that may contain nested arrays from rich_text expansion
     return content.flatMap(node => {
-      const resolved = resolveRichTextVariables(node, itemValues, layerDataMap);
+      const resolved = resolveRichTextVariables(node, itemValues, layerDataMap, rawItemValues, timezone);
       return Array.isArray(resolved) ? resolved : [resolved];
     });
   }
@@ -1365,11 +1363,11 @@ function resolveRichTextVariables(
     if (key === 'content' && Array.isArray(content[key])) {
       // Flatten the content array in case of expanded rich_text nodes
       result[key] = content[key].flatMap((node: any) => {
-        const resolved = resolveRichTextVariables(node, itemValues, layerDataMap);
+        const resolved = resolveRichTextVariables(node, itemValues, layerDataMap, rawItemValues, timezone);
         return Array.isArray(resolved) ? resolved : [resolved];
       });
     } else if (typeof content[key] === 'object' && content[key] !== null) {
-      result[key] = resolveRichTextVariables(content[key], itemValues, layerDataMap);
+      result[key] = resolveRichTextVariables(content[key], itemValues, layerDataMap, rawItemValues, timezone);
     } else {
       result[key] = content[key];
     }
@@ -1660,7 +1658,7 @@ export async function resolveCollectionLayers(
                 // Inject virtual field data into the resolved children
                 const injectedChildren = await Promise.all(
                   resolvedChildren.map(child =>
-                    injectCollectionData(child, virtualValues, undefined, isPublished, updatedLayerDataMap)
+                    injectCollectionData(child, virtualValues, undefined, isPublished, updatedLayerDataMap, undefined, timezone)
                   )
                 );
 
@@ -1845,12 +1843,16 @@ export async function resolveCollectionLayers(
             sortedItems.map(async (item) => {
               // Apply CMS translations to item values before using them
               let translatedValues = applyCmsTranslations(item.id, item.values, collectionFields, translations);
+              // Preserve raw values before date formatting for custom format presets
+              const rawTranslatedValues = { ...translatedValues };
               // Format date fields in user's timezone
               translatedValues = formatDateFieldsInItemValues(translatedValues, collectionFields, timezone);
 
               // Resolve reference fields BEFORE building layerDataMap
               // This ensures relationship paths (e.g., "refFieldId.targetFieldId") are available
               const enhancedValues = await resolveReferenceFields(translatedValues, collectionFields, isPublished);
+              // Overlay raw values on enhanced to preserve relationship paths while keeping unformatted dates
+              const rawEnhancedValues = { ...enhancedValues, ...rawTranslatedValues };
 
               // Extract slug for URL building
               const itemSlug = slugField ? (enhancedValues[slugField.id] || item.values[slugField.id]) : undefined;
@@ -1872,7 +1874,7 @@ export async function resolveCollectionLayers(
               // Then inject field data into the resolved children
               const injectedChildren = await Promise.all(
                 resolvedChildren.map(child =>
-                  injectCollectionData(child, enhancedValues, collectionFields, isPublished, updatedLayerDataMap)
+                  injectCollectionData(child, enhancedValues, collectionFields, isPublished, updatedLayerDataMap, rawEnhancedValues, timezone)
                 )
               );
 
@@ -2578,6 +2580,7 @@ export async function renderCollectionItemsToHtml(
   const renderedItems = await Promise.all(
     items.map(async (item, index) => {
       // Format date fields in user's timezone
+      const rawValues = { ...item.values };
       const formattedValues = formatDateFieldsInItemValues(item.values, collectionFields, htmlTimezone);
 
       // Deep clone the template for each item
@@ -2586,7 +2589,7 @@ export async function renderCollectionItemsToHtml(
       // Inject collection data into each layer of the template (text, images, etc.)
       const injectedLayers = await Promise.all(
         clonedTemplate.map((layer: Layer) =>
-          injectCollectionDataForHtml(layer, formattedValues, collectionFields, isPublished)
+          injectCollectionDataForHtml(layer, formattedValues, collectionFields, isPublished, rawValues, htmlTimezone)
         )
       );
 
@@ -2667,7 +2670,9 @@ async function injectCollectionDataForHtml(
   layer: Layer,
   itemValues: Record<string, string>,
   fields: CollectionField[],
-  isPublished: boolean
+  isPublished: boolean,
+  rawItemValues?: Record<string, string>,
+  timezone: string = 'UTC'
 ): Promise<Layer> {
   // Resolve reference fields if we have field definitions
   let enhancedValues = itemValues;
@@ -2676,6 +2681,7 @@ async function injectCollectionDataForHtml(
   }
 
   const updates: Partial<Layer> = {};
+  const resolvedVars: Record<string, unknown> = { ...layer.variables };
 
   // Resolve inline variables in text content
   const textVariable = layer.variables?.text;
@@ -2694,13 +2700,10 @@ async function injectCollectionDataForHtml(
         };
       }
 
-      const resolvedContent = resolveRichTextVariables(content, enhancedValues);
-      updates.variables = {
-        ...layer.variables,
-        text: {
-          type: 'dynamic_rich_text',
-          data: { content: resolvedContent }
-        }
+      const resolvedContent = resolveRichTextVariables(content, enhancedValues, undefined, rawItemValues, timezone);
+      resolvedVars.text = {
+        type: 'dynamic_rich_text',
+        data: { content: resolvedContent },
       };
     }
   }
@@ -2720,13 +2723,10 @@ async function injectCollectionDataForHtml(
         content_hash: null,
         values: enhancedValues,
       };
-      const resolved = resolveInlineVariables(textContent, mockItem);
-      updates.variables = {
-        ...layer.variables,
-        text: {
-          type: 'dynamic_text',
-          data: { content: resolved }
-        }
+      const resolved = resolveInlineVariables(textContent, mockItem, timezone);
+      resolvedVars.text = {
+        type: 'dynamic_text',
+        data: { content: resolved },
       };
     }
   }
@@ -2745,13 +2745,9 @@ async function injectCollectionDataForHtml(
   const imageSrc = layer.variables?.image?.src;
   if (imageSrc && isFieldVariable(imageSrc) && imageSrc.data.field_id) {
     const resolvedValue = resolveFieldPath(imageSrc);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      image: {
-        src: createResolvedAssetVariable(imageSrc.data.field_id, resolvedValue, imageSrc),
-        alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
-      },
+    resolvedVars.image = {
+      src: createResolvedAssetVariable(imageSrc.data.field_id, resolvedValue, imageSrc),
+      alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
     };
   }
 
@@ -2759,13 +2755,9 @@ async function injectCollectionDataForHtml(
   const videoSrc = layer.variables?.video?.src;
   if (videoSrc && isFieldVariable(videoSrc) && videoSrc.data.field_id) {
     const resolvedValue = resolveFieldPath(videoSrc);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      video: {
-        ...layer.variables?.video,
-        src: createResolvedAssetVariable(videoSrc.data.field_id, resolvedValue, videoSrc),
-      },
+    resolvedVars.video = {
+      ...layer.variables?.video,
+      src: createResolvedAssetVariable(videoSrc.data.field_id, resolvedValue, videoSrc),
     };
   }
 
@@ -2773,13 +2765,9 @@ async function injectCollectionDataForHtml(
   const audioSrc = layer.variables?.audio?.src;
   if (audioSrc && isFieldVariable(audioSrc) && audioSrc.data.field_id) {
     const resolvedValue = resolveFieldPath(audioSrc);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      audio: {
-        ...layer.variables?.audio,
-        src: createResolvedAssetVariable(audioSrc.data.field_id, resolvedValue, audioSrc),
-      },
+    resolvedVars.audio = {
+      ...layer.variables?.audio,
+      src: createResolvedAssetVariable(audioSrc.data.field_id, resolvedValue, audioSrc),
     };
   }
 
@@ -2787,12 +2775,8 @@ async function injectCollectionDataForHtml(
   const bgImageSrc = layer.variables?.backgroundImage?.src;
   if (bgImageSrc && isFieldVariable(bgImageSrc) && bgImageSrc.data.field_id) {
     const resolvedValue = resolveFieldPath(bgImageSrc);
-    updates.variables = {
-      ...updates.variables,
-      ...layer.variables,
-      backgroundImage: {
-        src: createResolvedAssetVariable(bgImageSrc.data.field_id, resolvedValue, bgImageSrc),
-      },
+    resolvedVars.backgroundImage = {
+      src: createResolvedAssetVariable(bgImageSrc.data.field_id, resolvedValue, bgImageSrc),
     };
   }
 
@@ -2807,11 +2791,14 @@ async function injectCollectionDataForHtml(
     }
   }
 
+  // Assign all resolved variables
+  updates.variables = resolvedVars as Layer['variables'];
+
   // Recursively process children
   if (layer.children) {
     const resolvedChildren = await Promise.all(
       layer.children.map(child =>
-        injectCollectionDataForHtml(child, enhancedValues, fields, isPublished)
+        injectCollectionDataForHtml(child, enhancedValues, fields, isPublished, rawItemValues, timezone)
       )
     );
     updates.children = resolvedChildren;
@@ -2821,4 +2808,1279 @@ async function injectCollectionDataForHtml(
     ...layer,
     ...updates,
   };
+}
+
+/**
+ * Resolve all AssetVariables in layer tree to DynamicTextVariables with public URLs
+ * This ensures assets are resolved server-side before rendering
+ * Should be called after all other layer processing (collections, components, etc.)
+ * @param isPublished - Whether to fetch published (true) or draft (false) assets
+ * @param components - Available components, needed to resolve assets from rich-text embedded components
+ */
+async function resolveAllAssets(
+  layers: Layer[],
+  isPublished: boolean = true,
+  components?: Component[],
+): Promise<{ layers: Layer[]; assetMap: Record<string, { public_url: string | null; content?: string | null; width?: number | null; height?: number | null }> }> {
+  const { getAssetsByIds } = await import('@/lib/repositories/assetRepository');
+
+  // Step 1: Collect all asset IDs from the layer tree
+  const assetIds = collectLayerAssetIds(layers, components || []);
+
+  // Step 2: Fetch all assets in a single query
+  const assetMap = await getAssetsByIds(Array.from(assetIds), isPublished);
+
+  // Step 2.5: Override public_url with SEO-friendly proxy URLs where available
+  for (const asset of Object.values(assetMap)) {
+    const proxyUrl = getAssetProxyUrl(asset);
+    if (proxyUrl) {
+      asset.public_url = proxyUrl;
+    }
+  }
+
+  // Step 3: Resolve layer URLs using the fetched asset map
+  return { layers: layers.map(l => resolveLayerAssets(l, assetMap)), assetMap };
+}
+
+/**
+ * Synchronously resolve AssetVariables on a layer tree using an already-fetched assetMap.
+ * Replaces AssetVariable refs with DynamicTextVariable containing the resolved URL.
+ * Used by resolveAllAssets (upfront) and the componentRenderer in layerToHtml (at render time).
+ */
+function resolveLayerAssets(
+  layer: Layer,
+  assetMap: Record<string, { public_url: string | null; content?: string | null; width?: number | null; height?: number | null }>,
+): Layer {
+  const variableUpdates: Partial<Layer['variables']> = {};
+
+  let attributeUpdates: Record<string, any> | undefined;
+
+  const imageSrc = layer.variables?.image?.src;
+  if (imageSrc && isAssetVariable(imageSrc)) {
+    const assetId = getAssetId(imageSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      let resolvedUrl = '';
+      if (asset?.public_url) {
+        resolvedUrl = asset.public_url;
+      } else if (asset?.content) {
+        resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
+      }
+      variableUpdates.image = {
+        src: createDynamicTextVariable(resolvedUrl),
+        alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
+      };
+
+      // Store intrinsic dimensions from asset for CLS prevention
+      if (asset?.width && asset?.height) {
+        attributeUpdates = {
+          ...(layer.attributes || {}),
+          ...(!layer.attributes?.width && { width: String(asset.width) }),
+          ...(!layer.attributes?.height && { height: String(asset.height) }),
+        };
+      }
+    }
+  }
+
+  const videoSrc = layer.variables?.video?.src;
+  const videoPoster = layer.variables?.video?.poster;
+  const videoUpdates: { src?: any; poster?: any } = {};
+  if (videoSrc && isAssetVariable(videoSrc)) {
+    const assetId = getAssetId(videoSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      videoUpdates.src = createDynamicTextVariable(asset?.public_url || '');
+    }
+  }
+  if (videoPoster && isAssetVariable(videoPoster)) {
+    const assetId = getAssetId(videoPoster);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      videoUpdates.poster = createDynamicTextVariable(asset?.public_url || '');
+    }
+  }
+  if (Object.keys(videoUpdates).length > 0) {
+    variableUpdates.video = { ...layer.variables?.video, ...videoUpdates };
+  }
+
+  const audioSrc = layer.variables?.audio?.src;
+  if (audioSrc && isAssetVariable(audioSrc)) {
+    const assetId = getAssetId(audioSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      variableUpdates.audio = { src: createDynamicTextVariable(asset?.public_url || '') };
+    }
+  }
+
+  const bgImageSrc = layer.variables?.backgroundImage?.src;
+  if (bgImageSrc && isAssetVariable(bgImageSrc)) {
+    const assetId = getAssetId(bgImageSrc);
+    let resolvedUrl = '';
+    if (assetId) {
+      const asset = assetMap[assetId];
+      if (asset?.public_url) {
+        resolvedUrl = asset.public_url;
+      } else if (asset?.content) {
+        resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
+      }
+    } else {
+      resolvedUrl = DEFAULT_ASSETS.IMAGE;
+    }
+    if (resolvedUrl) {
+      variableUpdates.backgroundImage = { src: createDynamicTextVariable(resolvedUrl) };
+    }
+  }
+
+  const iconSrc = layer.variables?.icon?.src;
+  if (iconSrc && isAssetVariable(iconSrc)) {
+    const assetId = getAssetId(iconSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      variableUpdates.icon = {
+        src: { type: 'static_text' as const, data: { content: asset?.content || '' } },
+      };
+    }
+  }
+
+  // Resolve richTextImage src URLs inside Tiptap content
+  const textVar = layer.variables?.text;
+  if (textVar && 'type' in textVar && textVar.type === 'dynamic_rich_text') {
+    const resolvedContent = resolveRichTextImageAssets((textVar as any).data?.content, assetMap);
+    if (resolvedContent !== (textVar as any).data?.content) {
+      variableUpdates.text = {
+        ...textVar,
+        data: { ...(textVar as any).data, content: resolvedContent },
+      } as any;
+    }
+  }
+
+  const updates: Partial<Layer> = {};
+  if (Object.keys(variableUpdates).length > 0) {
+    updates.variables = { ...layer.variables, ...variableUpdates };
+  }
+  if (attributeUpdates) {
+    updates.attributes = attributeUpdates;
+  }
+  if (layer.children) {
+    updates.children = layer.children.map(child => resolveLayerAssets(child, assetMap));
+  }
+
+  return Object.keys(updates).length > 0 ? { ...layer, ...updates } : layer;
+}
+
+/** Recursively resolve richTextImage asset URLs in Tiptap JSON content. */
+function resolveRichTextImageAssets(
+  node: any,
+  assetMap: Record<string, { public_url: string | null; content?: string | null }>,
+): any {
+  if (!node || typeof node !== 'object') return node;
+
+  if (node.type === 'richTextImage' && node.attrs?.assetId) {
+    const asset = assetMap[node.attrs.assetId];
+    if (asset?.public_url) {
+      return { ...node, attrs: { ...node.attrs, src: asset.public_url } };
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    let changed = false;
+    const newContent = node.content.map((child: any) => {
+      const resolved = resolveRichTextImageAssets(child, assetMap);
+      if (resolved !== child) changed = true;
+      return resolved;
+    });
+    if (changed) return { ...node, content: newContent };
+  }
+
+  return node;
+}
+
+/**
+ * Build a map of layerId -> anchor value (attributes.id) for O(1) anchor resolution
+ */
+function buildAnchorMap(layers: Layer[]): Record<string, string> {
+  const map: Record<string, string> = {};
+
+  const traverse = (layerList: Layer[]) => {
+    for (const layer of layerList) {
+      if (layer.attributes?.id) {
+        map[layer.id] = layer.attributes.id;
+      }
+      if (layer.children) {
+        traverse(layer.children);
+      }
+    }
+  };
+
+  traverse(layers);
+  return map;
+}
+
+/**
+ * Render Tiptap JSON content to HTML string
+ * Handles text nodes, marks (bold, italic, etc.), and paragraphs
+ */
+/**
+ * Callback for rendering an embedded component inside rich-text to HTML.
+ * @param componentId - The component ID
+ * @param overrides - Component variable overrides
+ * @returns HTML string of the rendered component
+ */
+type RenderComponentHtmlFn = (
+  componentId: string,
+  overrides: Layer['componentOverrides'],
+  preResolvedLayers?: Layer[],
+) => string;
+
+function renderTiptapToHtml(
+  content: any,
+  textStyles?: Record<string, any>,
+  renderComponentHtml?: RenderComponentHtmlFn,
+  linkContext?: LinkResolutionContext,
+): string {
+  if (!content || typeof content !== 'object') {
+    return '';
+  }
+
+  // Handle text node
+  if (content.type === 'text') {
+    let text = escapeHtml(content.text || '');
+
+    // Apply marks in reverse order (innermost to outermost)
+    if (content.marks && Array.isArray(content.marks)) {
+      for (let i = content.marks.length - 1; i >= 0; i--) {
+        const mark = content.marks[i];
+        const markClass = textStyles?.[mark.type]?.classes || '';
+        const classAttr = markClass ? ` class="${escapeHtml(markClass)}"` : '';
+
+        switch (mark.type) {
+          case 'bold':
+            text = `<strong${classAttr}>${text}</strong>`;
+            break;
+          case 'italic':
+            text = `<em${classAttr}>${text}</em>`;
+            break;
+          case 'underline':
+            text = `<u${classAttr}>${text}</u>`;
+            break;
+          case 'strike':
+            text = `<s${classAttr}>${text}</s>`;
+            break;
+          case 'subscript':
+            text = `<sub${classAttr}>${text}</sub>`;
+            break;
+          case 'superscript':
+            text = `<sup${classAttr}>${text}</sup>`;
+            break;
+          case 'link':
+            if (mark.attrs?.href) {
+              const target = mark.attrs.target ? ` target="${escapeHtml(mark.attrs.target)}"` : '';
+              const rel = mark.attrs.rel ? ` rel="${escapeHtml(mark.attrs.rel)}"` : (mark.attrs.target === '_blank' ? ' rel="noopener noreferrer"' : '');
+              text = `<a href="${escapeHtml(mark.attrs.href)}"${target}${rel}${classAttr}>${text}</a>`;
+            }
+            break;
+          case 'richTextLink': {
+            const rtLinkSettings = getLinkSettingsFromMark(mark.attrs || {});
+            if (rtLinkSettings.type && linkContext) {
+              const href = generateLinkHref(rtLinkSettings, linkContext);
+              if (href) {
+                const target = mark.attrs.target ? ` target="${escapeHtml(mark.attrs.target)}"` : '';
+                const rel = mark.attrs.rel
+                  ? ` rel="${escapeHtml(mark.attrs.rel)}"`
+                  : (mark.attrs.target === '_blank' ? ' rel="noopener noreferrer"' : '');
+                const download = mark.attrs.download ? ' download' : '';
+                text = `<a href="${escapeHtml(href)}"${target}${rel}${download}${classAttr}>${text}</a>`;
+              }
+            }
+            break;
+          }
+          case 'dynamicStyle': {
+            // Handle dynamic styles (headings, paragraphs, custom styles)
+            const styleKeys: string[] = mark.attrs?.styleKeys || [];
+            // Backwards compatibility: single styleKey
+            if (styleKeys.length === 0 && mark.attrs?.styleKey) {
+              styleKeys.push(mark.attrs.styleKey);
+            }
+            // Merge layer textStyles with defaults
+            const mergedStyles = { ...DEFAULT_TEXT_STYLES, ...textStyles };
+            const classes = styleKeys
+              .map(k => mergedStyles[k]?.classes || '')
+              .filter(Boolean)
+              .join(' ');
+            if (classes) {
+              text = `<span class="${escapeHtml(classes)}">${text}</span>`;
+            }
+            break;
+          }
+        }
+      }
+    }
+    return text;
+  }
+
+  // Handle paragraph
+  if (content.type === 'paragraph') {
+    const mergedStyles = { ...DEFAULT_TEXT_STYLES, ...textStyles };
+    const paragraphClass = mergedStyles?.paragraph?.classes || '';
+    // Empty paragraphs use non-breaking space to preserve the empty line
+    const innerHtml = content.content && content.content.length > 0
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
+      : '\u00A0';
+    // Wrap in span with paragraph styles for proper block display
+    return `<span class="${escapeHtml(paragraphClass)}">${innerHtml}</span>`;
+  }
+
+  // Handle heading
+  if (content.type === 'heading') {
+    const level = content.attrs?.level || 1;
+    const styleKey = `h${level}`;
+    const mergedStyles = { ...DEFAULT_TEXT_STYLES, ...textStyles };
+    const headingClass = mergedStyles?.[styleKey]?.classes || '';
+    // Empty headings use non-breaking space to preserve the empty line
+    const innerHtml = content.content && content.content.length > 0
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
+      : '\u00A0';
+    // Use span to avoid nesting issues (h1 inside p is invalid)
+    return `<span class="${escapeHtml(headingClass)}">${innerHtml}</span>`;
+  }
+
+  // Handle doc (root)
+  if (content.type === 'doc' && Array.isArray(content.content)) {
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('');
+  }
+
+  // Handle bullet list
+  if (content.type === 'bulletList') {
+    const listClass = textStyles?.bulletList?.classes || '';
+    const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
+    const items = content.content
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml, linkContext)).join('')
+      : '';
+    return `<ul${classAttr}>${items}</ul>`;
+  }
+
+  // Handle ordered list
+  if (content.type === 'orderedList') {
+    const listClass = textStyles?.orderedList?.classes || '';
+    const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
+    const items = content.content
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml, linkContext)).join('')
+      : '';
+    return `<ol${classAttr}>${items}</ol>`;
+  }
+
+  // Handle list item
+  if (content.type === 'listItem') {
+    const innerHtml = content.content
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('')
+      : '';
+    return `<li>${innerHtml}</li>`;
+  }
+
+  // Handle hardBreak
+  if (content.type === 'hardBreak') {
+    return '<br>';
+  }
+
+  // Handle rich-text images (optionally wrapped in a link)
+  if (content.type === 'richTextImage') {
+    const src = content.attrs?.src ? escapeHtml(content.attrs.src) : '';
+    const alt = content.attrs?.alt ? escapeHtml(content.attrs.alt) : '';
+    const imgClass = textStyles?.richTextImage?.classes || '';
+    const classAttr = imgClass ? ` class="${escapeHtml(imgClass)}"` : '';
+    const imgTag = `<img src="${src}" alt="${alt}"${classAttr} />`;
+
+    const storedLink = content.attrs?.link as LinkSettings | null;
+    if (storedLink?.type && linkContext) {
+      const resolvedHref = generateLinkHref(storedLink, linkContext);
+      if (resolvedHref) {
+        const href = escapeHtml(resolvedHref);
+        const target = storedLink.target ? ` target="${escapeHtml(storedLink.target)}"` : '';
+        const rel = storedLink.target === '_blank' ? ' rel="noopener noreferrer"' : '';
+        const download = storedLink.download ? ' download' : '';
+        return `<a href="${href}"${target}${rel}${download}>${imgTag}</a>`;
+      }
+    }
+
+    return imgTag;
+  }
+
+  // Handle embedded component blocks
+  if (content.type === 'richTextComponent' && content.attrs?.componentId) {
+    if (renderComponentHtml) {
+      return renderComponentHtml(
+        content.attrs.componentId,
+        content.attrs.componentOverrides ?? undefined,
+        content.attrs._resolvedLayers,
+      );
+    }
+    return `<div data-component-id="${escapeHtml(content.attrs.componentId)}"></div>`;
+  }
+
+  // Fallback: recursively process content
+  if (Array.isArray(content.content)) {
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml, linkContext)).join('');
+  }
+
+  return '';
+}
+
+/**
+ * Convert a Layer to HTML string
+ * Handles common layer types and their attributes
+ */
+function layerToHtml(
+  layer: Layer,
+  collectionItemId?: string,
+  pages?: Page[],
+  folders?: PageFolder[],
+  collectionItemSlugs?: Record<string, string>,
+  locale?: Locale | null,
+  translations?: Record<string, Translation>,
+  anchorMap?: Record<string, string>,
+  collectionItemData?: Record<string, string>,
+  pageCollectionItemData?: Record<string, string>,
+  assetMap?: Record<string, { public_url: string | null; content?: string | null; width?: number | null; height?: number | null }>,
+  layerDataMap?: Record<string, Record<string, string>>,
+  components?: Component[],
+  ancestorComponentIds?: Set<string>,
+  isSlideChild?: boolean,
+): string {
+  // Handle fragment layers (created by resolveCollectionLayers for nested collections)
+  // Fragments render their children directly without a wrapper element
+  if (layer.name === '_fragment' && layer.children) {
+    return layer.children
+      .map((child) =>
+        layerToHtml(child, collectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, collectionItemData, pageCollectionItemData, assetMap, layerDataMap, components, ancestorComponentIds, isSlideChild)
+      )
+      .join('');
+  }
+
+  // Use stored item values from cloned collection layers if available (multi-asset/nested collections)
+  // This ensures layers inside collection items have access to the correct item values
+  const effectiveCollectionItemData = layer._collectionItemValues || collectionItemData;
+  const effectiveCollectionItemId = layer._collectionItemId || collectionItemId;
+
+  // Build layer data map with stored collection layer data
+  const effectiveLayerDataMap = layer._layerDataMap || layerDataMap;
+
+  // Get the HTML tag
+  let tag = getLayerHtmlTag(layer);
+
+  // Buttons with link settings render as <a> directly instead of being
+  // wrapped in <a><button></button></a> which is invalid HTML
+  const buttonLinkSettings = layer.variables?.link;
+  const isButtonWithLink = layer.name === 'button' && buttonLinkSettings && buttonLinkSettings.type;
+  if (isButtonWithLink) {
+    tag = 'a';
+  }
+
+  // Build classes string
+  let classesStr = '';
+  if (Array.isArray(layer.classes)) {
+    classesStr = layer.classes.join(' ');
+  } else if (typeof layer.classes === 'string') {
+    classesStr = layer.classes;
+  }
+
+  // <a> with display:flex is block-level (full width) unlike <button> which
+  // shrink-wraps. Add w-fit to match button sizing unless width is explicit.
+  if (isButtonWithLink) {
+    const cls = Array.isArray(layer.classes) ? layer.classes : (layer.classes || '').split(' ');
+    const hasWidth = cls.some((c: string) => /^w-/.test(c.split(':').pop() || ''));
+    if (!hasWidth) {
+      classesStr = classesStr ? `${classesStr} w-fit` : 'w-fit';
+    }
+  }
+
+  // Add Swiper-specific classes for slider layers
+  if (SWIPER_CLASS_MAP[layer.name]) {
+    classesStr = classesStr
+      ? `${classesStr} ${SWIPER_CLASS_MAP[layer.name]}`
+      : SWIPER_CLASS_MAP[layer.name];
+  }
+
+  if (isSlideChild) {
+    classesStr = classesStr ? `${classesStr} swiper-slide` : 'swiper-slide';
+  }
+
+  // Build attributes
+  const attrs: string[] = [];
+
+  if (layer.id) {
+    attrs.push(`data-layer-id="${escapeHtml(layer.id)}"`);
+  }
+
+  // Add data attributes for slider nav/pagination elements (used by SliderInitializer)
+  if (SWIPER_DATA_ATTR_MAP[layer.name]) {
+    attrs.push(SWIPER_DATA_ATTR_MAP[layer.name]);
+  }
+
+  // Add slider settings as data attribute on the root slider layer
+  if (layer.name === 'slider' && layer.settings?.slider) {
+    attrs.push(`data-slider-id="${escapeHtml(layer.id)}"`);
+    attrs.push(`data-slider-settings="${escapeHtml(JSON.stringify(layer.settings.slider))}"`);
+  }
+
+  // Add lightbox data attributes for the lightbox layer
+  if (layer.name === 'lightbox' && layer.settings?.lightbox) {
+    const lbSettings = layer.settings.lightbox;
+    const triggerId = lbSettings.groupId || layer.id;
+    attrs.push(`data-lightbox-id="${escapeHtml(triggerId)}"`);
+    // Strip builder-only fields from serialized settings
+    const { filesField: _ff, filesSource: _fs, ...runtimeSettings } = lbSettings;
+    attrs.push(`data-lightbox-settings="${escapeHtml(JSON.stringify(runtimeSettings))}"`);
+    // Resolve lightbox file asset IDs to URLs
+    const resolvedFiles = lbSettings.files
+      .map((fileId: string) => {
+        if (fileId.startsWith('http') || fileId.startsWith('/')) return fileId;
+        const asset = assetMap?.[fileId];
+        return asset?.public_url ?? null;
+      })
+      .filter(Boolean) as string[];
+    if (resolvedFiles.length) {
+      attrs.push(`data-lightbox-files="${escapeHtml(resolvedFiles.join(','))}"`);
+    }
+    // For grouped lightboxes, set which image to open to
+    if (lbSettings.groupId && resolvedFiles.length > 0) {
+      attrs.push(`data-lightbox-open-to="${escapeHtml(resolvedFiles[0])}"`);
+    }
+  }
+
+  // Render filter-dependent conditional visibility data attributes
+  if (layer.attributes?.['data-collection-empty-state']) {
+    attrs.push(`data-collection-empty-state="${escapeHtml(layer.attributes['data-collection-empty-state'])}"`);
+  }
+  if (layer.attributes?.['data-collection-has-items']) {
+    attrs.push(`data-collection-has-items="${escapeHtml(layer.attributes['data-collection-has-items'])}"`);
+  }
+
+  if (classesStr) {
+    attrs.push(`class="${escapeHtml(classesStr)}"`);
+  }
+
+  if (layer.attributes?.id) {
+    attrs.push(`id="${escapeHtml(layer.attributes.id)}"`);
+  }
+
+  // Hide elements marked as hiddenGenerated (e.g. alerts, slider fraction placeholder)
+  if (layer.hiddenGenerated) {
+    const existingDynamic = layer._dynamicStyles || {};
+    layer = { ...layer, _dynamicStyles: { ...existingDynamic, display: 'none' } };
+  }
+
+  // Hide bullet pagination template until Swiper initializes and generates the real bullets
+  if (layer.name === 'slideBullets') {
+    const existingDynamic = layer._dynamicStyles || {};
+    layer = { ...layer, _dynamicStyles: { ...existingDynamic, visibility: 'hidden' } };
+  }
+
+  // Build inline styles from dynamic sources (CMS color bindings + background image variable)
+  // Route CMS-bound gradients through --bg-img variable instead of 'background'
+  const rawDynamic = layer._dynamicStyles || {};
+  const cmsGradient = rawDynamic.background?.includes('gradient(') ? rawDynamic.background : undefined;
+  const inlineStyles: Record<string, string> = cmsGradient
+    ? Object.fromEntries(Object.entries(rawDynamic).filter(([k]) => k !== 'background'))
+    : { ...rawDynamic };
+
+  // Combine static bgImageVars + bgGradientVars per CSS variable key
+  const bgImageVars = layer.design?.backgrounds?.bgImageVars;
+  const bgGradientVars = layer.design?.backgrounds?.bgGradientVars;
+  Object.assign(inlineStyles, mergeStaticBgVars(bgImageVars, bgGradientVars));
+
+  // Resolve background image from variable → set --bg-img CSS custom property (combined with gradient)
+  const bgImageSrc = layer.variables?.backgroundImage?.src;
+  if (bgImageSrc && bgImageSrc.type === 'dynamic_text') {
+    const bgUrl = bgImageSrc.data.content;
+    if (bgUrl && bgUrl.trim()) {
+      const cssUrl = bgUrl.startsWith('url(') ? bgUrl : `url(${bgUrl})`;
+      inlineStyles['--bg-img'] = combineBgValues(cssUrl, bgGradientVars?.['--bg-img']);
+    }
+  }
+
+  // CMS-bound gradient routes through --bg-img variable
+  if (cmsGradient) {
+    const existingImg = inlineStyles['--bg-img']?.split(', ').find(v => v.startsWith('url(')) || bgImageVars?.['--bg-img'];
+    inlineStyles['--bg-img'] = combineBgValues(existingImg, cmsGradient);
+  }
+
+  if (Object.keys(inlineStyles).length > 0) {
+    const styleStr = Object.entries(inlineStyles)
+      .map(([prop, val]) => {
+        // Convert camelCase to kebab-case for CSS (except CSS variables)
+        const cssProp = prop.startsWith('--') ? prop : prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+        return `${cssProp}:${val}`;
+      })
+      .join(';');
+    attrs.push(`style="${escapeHtml(styleStr)}"`);
+  }
+
+  // Handle images (variables structure)
+  if (tag === 'img') {
+    const imageSrc = layer.variables?.image?.src;
+    let resolvedSrcValue: string | undefined;
+    if (imageSrc) {
+      if (imageSrc.type === 'dynamic_text') {
+        resolvedSrcValue = imageSrc.data.content || undefined;
+      } else if (imageSrc.type === 'asset') {
+        resolvedSrcValue = undefined;
+      }
+      if (resolvedSrcValue && resolvedSrcValue.trim()) {
+        const optimizedSrc = getOptimizedImageUrl(resolvedSrcValue, 1920, 85);
+        attrs.push(`src="${escapeHtml(optimizedSrc)}"`);
+
+        const srcset = generateImageSrcset(resolvedSrcValue);
+        if (srcset) {
+          attrs.push(`srcset="${escapeHtml(srcset)}"`);
+          attrs.push(`sizes="${escapeHtml(getImageSizes())}"`);
+        }
+      }
+    }
+    attrs.push('data-layer-type="image"');
+
+    const imageAlt = layer.variables?.image?.alt;
+    if (imageAlt && imageAlt.type === 'dynamic_text') {
+      const resolvedAlt = resolveInlineVariablesFromData(imageAlt.data.content, effectiveCollectionItemData, pageCollectionItemData, 'UTC', effectiveLayerDataMap);
+      attrs.push(`alt="${escapeHtml(resolvedAlt)}"`);
+    }
+
+    // Set width/height from explicit attributes or intrinsic asset dimensions (prevents CLS)
+    let imgWidth = layer.attributes?.width as string | undefined;
+    let imgHeight = layer.attributes?.height as string | undefined;
+    if ((!imgWidth || !imgHeight) && resolvedSrcValue && assetMap) {
+      const matchedAsset = Object.values(assetMap).find(a => a.public_url === resolvedSrcValue);
+      if (matchedAsset?.width && matchedAsset?.height) {
+        if (!imgWidth) imgWidth = String(matchedAsset.width);
+        if (!imgHeight) imgHeight = String(matchedAsset.height);
+      }
+    }
+    if (imgWidth) attrs.push(`width="${escapeHtml(imgWidth)}"`);
+    if (imgHeight) attrs.push(`height="${escapeHtml(imgHeight)}"`);
+
+    const imgLoadingAttr = layer.attributes?.loading;
+    if (imgLoadingAttr) attrs.push(`loading="${escapeHtml(String(imgLoadingAttr))}"`);
+  }
+
+  // Handle YouTube video (VideoVariable with provider='youtube') - render as iframe
+  if (layer.name === 'video') {
+    const videoSrc = layer.variables?.video?.src;
+    if (videoSrc && videoSrc.type === 'video' && 'provider' in videoSrc.data && videoSrc.data.provider === 'youtube') {
+      const rawVideoId = videoSrc.data.video_id || '';
+      // Resolve inline variables in video ID (supports CMS binding)
+      const videoId = resolveInlineVariablesFromData(rawVideoId, effectiveCollectionItemData, pageCollectionItemData, 'UTC', effectiveLayerDataMap);
+      const privacyMode = layer.attributes?.youtubePrivacyMode === true;
+      const domain = privacyMode ? 'youtube-nocookie.com' : 'youtube.com';
+
+      // Build YouTube embed URL with parameters
+      const params: string[] = [];
+      if (layer.attributes?.autoplay === true) params.push('autoplay=1');
+      if (layer.attributes?.muted === true) params.push('mute=1');
+      if (layer.attributes?.loop === true) params.push(`loop=1&playlist=${videoId}`);
+      if (layer.attributes?.controls !== true) params.push('controls=0');
+
+      const embedUrl = `https://www.${domain}/embed/${videoId}${params.length > 0 ? '?' + params.join('&') : ''}`;
+
+      attrs.push(`src="${escapeHtml(embedUrl)}"`);
+      attrs.push('frameborder="0"');
+      attrs.push('allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"');
+      attrs.push('allowfullscreen');
+      attrs.push('data-layer-type="video"');
+
+      const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+      const childrenHtml = layer.children
+        ? layer.children
+          .map((child) =>
+            layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, ancestorComponentIds, layer.name === 'slides')
+          )
+          .join('')
+        : '';
+      return `<iframe${attrsStr}>${childrenHtml}</iframe>`;
+    }
+  }
+
+  // Handle video (variables structure)
+  if (tag === 'video') {
+    const videoSrc = layer.variables?.video?.src;
+    if (videoSrc) {
+      // Extract string value from variable (should be DynamicTextVariable after resolution)
+      let srcValue: string | undefined = undefined;
+      if (videoSrc.type === 'dynamic_text') {
+        srcValue = videoSrc.data.content || undefined;
+      } else if (videoSrc.type === 'asset') {
+        // AssetVariable should have been resolved, but if not, skip
+        srcValue = undefined;
+      }
+      if (srcValue && srcValue.trim()) {
+        attrs.push(`src="${escapeHtml(srcValue)}"`);
+      }
+    }
+    // Handle video poster
+    const videoPoster = layer.variables?.video?.poster;
+    if (videoPoster) {
+      let posterValue: string | undefined = undefined;
+      // After resolveAllAssets, poster should be DynamicTextVariable
+      if ((videoPoster as any).type === 'dynamic_text') {
+        posterValue = (videoPoster as any).data?.content || undefined;
+      }
+      if (posterValue && posterValue.trim()) {
+        attrs.push(`poster="${escapeHtml(posterValue)}"`);
+      }
+    }
+    attrs.push('data-layer-type="video"');
+  }
+
+  // Handle audio (variables structure)
+  if (tag === 'audio') {
+    const audioSrc = layer.variables?.audio?.src;
+    if (audioSrc) {
+      // Extract string value from variable (should be DynamicTextVariable after resolution)
+      let srcValue: string | undefined = undefined;
+      if (audioSrc.type === 'dynamic_text') {
+        srcValue = audioSrc.data.content || undefined;
+      } else if (audioSrc.type === 'asset') {
+        // AssetVariable should have been resolved, but if not, skip
+        srcValue = undefined;
+      }
+      if (srcValue && srcValue.trim()) {
+        attrs.push(`src="${escapeHtml(srcValue)}"`);
+      }
+    }
+    attrs.push('data-layer-type="audio"');
+  }
+
+  // Handle icons (variables structure)
+  let iconHtml = '';
+  if (layer.name === 'icon') {
+    const iconSrc = layer.variables?.icon?.src;
+    if (iconSrc) {
+      iconHtml = getVariableStringValue(iconSrc) || '';
+    }
+    // Add data-icon attribute to trigger CSS styling
+    attrs.push('data-icon="true"');
+  }
+
+  // Handle Code Embed layers - render as iframe for SSR
+  if (layer.name === 'htmlEmbed') {
+    const htmlEmbedCode = layer.settings?.htmlEmbed?.code || '<div>Add your custom code here</div>';
+
+    // Create a complete HTML document for iframe srcdoc
+    const iframeContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  ${htmlEmbedCode}
+</body>
+</html>`;
+
+    // Escape the HTML for srcdoc attribute
+    const escapedIframeContent = iframeContent
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;');
+
+    attrs.push('data-html-embed="true"');
+    attrs.push(`srcdoc="${escapedIframeContent}"`);
+    attrs.push('sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"');
+    attrs.push('style="width: 100%; border: none; display: block;"');
+    attrs.push(`title="Code Embed ${layer.id}"`);
+
+    const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+    return `<iframe${attrsStr}></iframe>`;
+  }
+
+  // Handle links (variables structure)
+  if (tag === 'a') {
+    const linkSettings = layer.variables?.link;
+    if (linkSettings) {
+      let hrefValue = '';
+
+      switch (linkSettings.type) {
+        case 'url':
+          if (linkSettings.url?.data?.content) {
+            hrefValue = linkSettings.url.data.content;
+          }
+          break;
+        case 'email':
+          if (linkSettings.email?.data?.content) {
+            hrefValue = `mailto:${linkSettings.email.data.content}`;
+          }
+          break;
+        case 'phone':
+          if (linkSettings.phone?.data?.content) {
+            hrefValue = `tel:${linkSettings.phone.data.content}`;
+          }
+          break;
+        case 'asset':
+          // Asset URLs should be resolved elsewhere (resolveAllAssets)
+          break;
+        case 'page':
+          // Resolve page URL using pages and folders
+          if (linkSettings.page?.id && pages && folders) {
+            const linkedPage = pages.find(p => p.id === linkSettings.page?.id);
+            if (linkedPage) {
+              // Check if this is a dynamic page with a specific collection item
+              if (linkedPage.is_dynamic && linkSettings.page.collection_item_id && collectionItemSlugs) {
+                let itemSlug: string | undefined;
+
+                // Handle special "current" keywords and reference field resolution
+                if (linkSettings.page.collection_item_id === 'current-page' ||
+                    linkSettings.page.collection_item_id === 'current-collection') {
+                  // Use the current collection item's slug (from effectiveCollectionItemId)
+                  itemSlug = effectiveCollectionItemId ? collectionItemSlugs[effectiveCollectionItemId] : undefined;
+                } else if (linkSettings.page.collection_item_id.startsWith('ref-')) {
+                  // Resolve via reference field value from current item data
+                  const refItemId = resolveRefCollectionItemId(
+                    linkSettings.page.collection_item_id,
+                    pageCollectionItemData,
+                    effectiveCollectionItemData
+                  );
+                  itemSlug = refItemId ? collectionItemSlugs[refItemId] : undefined;
+                } else {
+                  // Use the specific item slug
+                  itemSlug = collectionItemSlugs[linkSettings.page.collection_item_id];
+                }
+
+                // Use localized URL if locale is active
+                hrefValue = buildLocalizedDynamicPageUrl(linkedPage, folders, itemSlug || null, locale, translations);
+              } else {
+                // Static page or dynamic page without specific item
+                hrefValue = buildLocalizedSlugPath(linkedPage, folders, 'page', locale, translations);
+              }
+            }
+          }
+          break;
+        case 'field': {
+          const fieldId = linkSettings.field?.data?.field_id;
+          const collectionLayerId = linkSettings.field?.data?.collection_layer_id;
+          // Use layer-specific data if collection_layer_id is specified
+          let rawValue: string | undefined;
+          if (collectionLayerId && effectiveLayerDataMap?.[collectionLayerId]) {
+            rawValue = fieldId ? effectiveLayerDataMap[collectionLayerId][fieldId] : undefined;
+          } else {
+            rawValue = fieldId ? effectiveCollectionItemData?.[fieldId] : undefined;
+          }
+          if (fieldId && rawValue) {
+            const fieldType = linkSettings.field?.data?.field_type;
+            hrefValue = resolveFieldLinkValue({
+              fieldId,
+              rawValue,
+              fieldType,
+              context: {
+                pages: pages || [],
+                folders: folders || [],
+                collectionItemSlugs,
+                locale,
+                translations,
+                isPreview: false,
+              },
+              assetMap,
+            });
+          }
+          break;
+        }
+      }
+
+      // Append anchor if present (anchor_layer_id references a layer's ID attribute)
+      // Resolve layer ID to actual anchor value using pre-built map (O(1) lookup)
+      if (linkSettings.anchor_layer_id) {
+        const anchorValue = anchorMap?.[linkSettings.anchor_layer_id] || linkSettings.anchor_layer_id;
+        if (hrefValue) {
+          hrefValue = `${hrefValue}#${anchorValue}`;
+        } else {
+          hrefValue = `#${anchorValue}`;
+        }
+      }
+
+      if (hrefValue) {
+        attrs.push(`href="${escapeHtml(hrefValue)}"`);
+      }
+
+      // Link behavior attributes from linkSettings
+      const linkTarget = linkSettings.target;
+      if (linkTarget) {
+        attrs.push(`target="${escapeHtml(linkTarget)}"`);
+      }
+      const linkRel = linkSettings.rel || (linkTarget === '_blank' ? 'noopener noreferrer' : '');
+      if (linkRel) {
+        attrs.push(`rel="${escapeHtml(linkRel)}"`);
+      }
+      if (linkSettings.download) {
+        attrs.push('download');
+      }
+    }
+  }
+
+  // Add custom attributes
+  // Map JSX attribute names back to HTML equivalents for published output
+  const jsxToHtmlAttrMap: Record<string, string> = {
+    'htmlFor': 'for',
+    'className': 'class',
+    'autoFocus': 'autofocus',
+  };
+  if (layer.attributes) {
+    for (const [key, value] of Object.entries(layer.attributes)) {
+      // Skip type attribute for buttons converted to <a>
+      if (isButtonWithLink && key === 'type') continue;
+      if (value !== undefined && value !== null) {
+        const htmlKey = jsxToHtmlAttrMap[key] || key;
+        // Boolean HTML attributes should be rendered without a value
+        if (value === true) {
+          attrs.push(escapeHtml(htmlKey));
+        } else if (value !== false) {
+          attrs.push(`${escapeHtml(htmlKey)}="${escapeHtml(String(value))}"`);
+        }
+      }
+    }
+  }
+
+  // For buttons rendered as <a>, resolve link href and add attributes directly
+  if (isButtonWithLink && buttonLinkSettings) {
+    let btnLinkHref = '';
+
+    switch (buttonLinkSettings.type) {
+      case 'url':
+        btnLinkHref = buttonLinkSettings.url?.data?.content || '';
+        break;
+      case 'email':
+        btnLinkHref = buttonLinkSettings.email?.data?.content ? `mailto:${buttonLinkSettings.email.data.content}` : '';
+        break;
+      case 'phone':
+        btnLinkHref = buttonLinkSettings.phone?.data?.content ? `tel:${buttonLinkSettings.phone.data.content}` : '';
+        break;
+      case 'page':
+        if (buttonLinkSettings.page?.id && pages && folders) {
+          const linkedPage = pages.find(p => p.id === buttonLinkSettings.page?.id);
+          if (linkedPage) {
+            btnLinkHref = buildLocalizedSlugPath(linkedPage, folders, 'page', locale, translations);
+          }
+        }
+        break;
+      case 'field': {
+        const fieldId = buttonLinkSettings.field?.data?.field_id;
+        const collLayerId = buttonLinkSettings.field?.data?.collection_layer_id;
+        let rawValue: string | undefined;
+        if (collLayerId && effectiveLayerDataMap?.[collLayerId]) {
+          rawValue = fieldId ? effectiveLayerDataMap[collLayerId][fieldId] : undefined;
+        } else {
+          rawValue = fieldId ? effectiveCollectionItemData?.[fieldId] : undefined;
+        }
+        if (fieldId && rawValue) {
+          const fieldType = buttonLinkSettings.field?.data?.field_type;
+          btnLinkHref = resolveFieldLinkValue({
+            fieldId,
+            rawValue,
+            fieldType,
+            context: {
+              pages: pages || [],
+              folders: folders || [],
+              collectionItemSlugs,
+              locale,
+              translations,
+              isPreview: false,
+            },
+            assetMap,
+          });
+        }
+        break;
+      }
+    }
+
+    if (buttonLinkSettings.anchor_layer_id) {
+      const anchorValue = anchorMap?.[buttonLinkSettings.anchor_layer_id] || buttonLinkSettings.anchor_layer_id;
+      btnLinkHref = btnLinkHref ? `${btnLinkHref}#${anchorValue}` : `#${anchorValue}`;
+    }
+
+    if (btnLinkHref) {
+      attrs.push(`href="${escapeHtml(btnLinkHref)}"`);
+      if (buttonLinkSettings.target) {
+        attrs.push(`target="${escapeHtml(buttonLinkSettings.target)}"`);
+      }
+      const btnLinkRel = buttonLinkSettings.rel || (buttonLinkSettings.target === '_blank' ? 'noopener noreferrer' : '');
+      if (btnLinkRel) {
+        attrs.push(`rel="${escapeHtml(btnLinkRel)}"`);
+      }
+      if (buttonLinkSettings.download) {
+        attrs.push('download');
+      }
+    }
+    attrs.push('role="button"');
+  }
+
+  // For slider layers, strip inactive pagination/navigation children from the tree
+  const effectiveChildren = (layer.name === 'slider' && layer.children)
+    ? filterDisabledSliderLayers(layer.children, layer.settings)
+    : layer.children;
+
+  // Render children
+  const childrenHtml = effectiveChildren
+    ? effectiveChildren
+      .map((child) =>
+        layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, ancestorComponentIds, layer.name === 'slides')
+      )
+      .join('')
+    : '';
+
+  // Get text content from variables.text
+  const textVariable = layer.variables?.text;
+  let textContent = '';
+  let isRichText = false;
+
+  if (textVariable) {
+    if (textVariable.type === 'dynamic_text') {
+      textContent = textVariable.data.content || '';
+    } else if (textVariable.type === 'dynamic_rich_text') {
+      // Build component renderer with circular reference prevention
+      const componentRenderer: RenderComponentHtmlFn | undefined = components?.length
+        ? (componentId, overrides, preResolvedLayers) => {
+          if (ancestorComponentIds?.has(componentId)) return '';
+          const comp = components.find(c => c.id === componentId);
+          if (!comp?.layers?.length) return '';
+          const childAncestors = new Set(ancestorComponentIds);
+          childAncestors.add(componentId);
+          // Use pre-resolved layers (with collections) when available from resolveRichTextCollections
+          const resolved = preResolvedLayers
+            ?? resolveComponents(
+              applyComponentOverrides(comp.layers, overrides, comp.variables),
+              components, comp.variables, overrides,
+            );
+          const withAssets = assetMap
+            ? resolved.map(l => resolveLayerAssets(l, assetMap))
+            : resolved;
+          return withAssets
+            .map(l => layerToHtml(l, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, childAncestors, layer.name === 'slides'))
+            .join('');
+        }
+        : undefined;
+      const richTextLinkContext: LinkResolutionContext = {
+        pages,
+        folders,
+        collectionItemSlugs,
+        collectionItemId: effectiveCollectionItemId,
+        collectionItemData: effectiveCollectionItemData,
+        pageCollectionItemData,
+        locale,
+        translations,
+        anchorMap,
+        layerDataMap: effectiveLayerDataMap,
+      };
+      textContent = renderTiptapToHtml(textVariable.data.content, layer.textStyles, componentRenderer, richTextLinkContext);
+      isRichText = true;
+    }
+  }
+
+  // Handle self-closing tags
+  const selfClosingTags = ['img', 'br', 'hr', 'input', 'meta', 'link'];
+  if (selfClosingTags.includes(tag)) {
+    let selfClosingHtml = `<${tag} ${attrs.join(' ')} />`;
+
+    // Wrap with link if layer has link settings
+    const linkSettings = layer.variables?.link;
+    if (linkSettings && linkSettings.type) {
+      let linkHref = '';
+
+      switch (linkSettings.type) {
+        case 'url':
+          linkHref = linkSettings.url?.data?.content || '';
+          break;
+        case 'email':
+          linkHref = linkSettings.email?.data?.content ? `mailto:${linkSettings.email.data.content}` : '';
+          break;
+        case 'phone':
+          linkHref = linkSettings.phone?.data?.content ? `tel:${linkSettings.phone.data.content}` : '';
+          break;
+        case 'page':
+          if (linkSettings.page?.id && pages && folders) {
+            const linkedPage = pages.find(p => p.id === linkSettings.page?.id);
+            if (linkedPage) {
+              linkHref = buildLocalizedSlugPath(linkedPage, folders, 'page', locale, translations);
+            }
+          }
+          break;
+        case 'field': {
+          const fieldId = linkSettings.field?.data?.field_id;
+          const collectionLayerId = linkSettings.field?.data?.collection_layer_id;
+          // Use layer-specific data if collection_layer_id is specified
+          let rawValue: string | undefined;
+          if (collectionLayerId && effectiveLayerDataMap?.[collectionLayerId]) {
+            rawValue = fieldId ? effectiveLayerDataMap[collectionLayerId][fieldId] : undefined;
+          } else {
+            rawValue = fieldId ? effectiveCollectionItemData?.[fieldId] : undefined;
+          }
+          if (fieldId && rawValue) {
+            const fieldType = linkSettings.field?.data?.field_type;
+            linkHref = resolveFieldLinkValue({
+              fieldId,
+              rawValue,
+              fieldType,
+              context: {
+                pages: pages || [],
+                folders: folders || [],
+                collectionItemSlugs,
+                locale,
+                translations,
+                isPreview: false,
+              },
+              assetMap,
+            });
+          }
+          break;
+        }
+      }
+
+      // Append anchor if present
+      if (linkSettings.anchor_layer_id) {
+        const anchorValue = anchorMap?.[linkSettings.anchor_layer_id] || linkSettings.anchor_layer_id;
+        if (linkHref) {
+          linkHref = `${linkHref}#${anchorValue}`;
+        } else {
+          linkHref = `#${anchorValue}`;
+        }
+      }
+
+      // Wrap in <a> tag if we have a valid href
+      if (linkHref) {
+        const linkAttrs: string[] = [`href="${escapeHtml(linkHref)}"`];
+        const linkTarget = linkSettings.target;
+        if (linkTarget) {
+          linkAttrs.push(`target="${escapeHtml(linkTarget)}"`);
+        }
+        const linkRel = linkSettings.rel || (linkTarget === '_blank' ? 'noopener noreferrer' : '');
+        if (linkRel) {
+          linkAttrs.push(`rel="${escapeHtml(linkRel)}"`);
+        }
+        if (linkSettings.download) {
+          linkAttrs.push('download');
+        }
+        selfClosingHtml = `<a ${linkAttrs.join(' ')}>${selfClosingHtml}</a>`;
+      }
+    }
+
+    return selfClosingHtml;
+  }
+
+  // Render the element
+  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+  // For icon layers, use raw iconHtml (don't escape SVG content)
+  // For rich text, content is already HTML-safe (escaped during Tiptap rendering)
+  let elementHtml = '';
+  if (layer.name === 'icon' && iconHtml) {
+    elementHtml = `<${tag}${attrsStr}>${iconHtml}${childrenHtml}</${tag}>`;
+  } else if (isRichText) {
+    // Rich text content is already rendered to HTML, don't escape
+    elementHtml = `<${tag}${attrsStr}>${textContent}${childrenHtml}</${tag}>`;
+  } else {
+    elementHtml = `<${tag}${attrsStr}>${escapeHtml(textContent)}${childrenHtml}</${tag}>`;
+  }
+
+  // Wrap with link if layer has link settings (but is not already an <a> tag)
+  const linkSettings = layer.variables?.link;
+  if (tag !== 'a' && linkSettings && linkSettings.type) {
+    let linkHref = '';
+
+    switch (linkSettings.type) {
+      case 'url':
+        linkHref = linkSettings.url?.data?.content || '';
+        break;
+      case 'email':
+        linkHref = linkSettings.email?.data?.content ? `mailto:${linkSettings.email.data.content}` : '';
+        break;
+      case 'phone':
+        linkHref = linkSettings.phone?.data?.content ? `tel:${linkSettings.phone.data.content}` : '';
+        break;
+      case 'page':
+        if (linkSettings.page?.id && pages && folders) {
+          const linkedPage = pages.find(p => p.id === linkSettings.page?.id);
+          if (linkedPage) {
+            // Use localized URL if locale is active
+            linkHref = buildLocalizedSlugPath(linkedPage, folders, 'page', locale, translations);
+          }
+        }
+        break;
+      case 'field': {
+        const wrapFieldId = linkSettings.field?.data?.field_id;
+        const wrapCollectionLayerId = linkSettings.field?.data?.collection_layer_id;
+        // Use layer-specific data if collection_layer_id is specified
+        let rawValue: string | undefined;
+        if (wrapCollectionLayerId && effectiveLayerDataMap?.[wrapCollectionLayerId]) {
+          rawValue = wrapFieldId ? effectiveLayerDataMap[wrapCollectionLayerId][wrapFieldId] : undefined;
+        } else {
+          rawValue = wrapFieldId ? effectiveCollectionItemData?.[wrapFieldId] : undefined;
+        }
+        if (wrapFieldId && rawValue) {
+          const fieldType = linkSettings.field?.data?.field_type;
+          linkHref = resolveFieldLinkValue({
+            fieldId: wrapFieldId,
+            rawValue,
+            fieldType,
+            context: {
+              pages: pages || [],
+              folders: folders || [],
+              collectionItemSlugs,
+              locale,
+              translations,
+              isPreview: false,
+            },
+            assetMap,
+          });
+        }
+        break;
+      }
+    }
+
+    // Append anchor if present - resolve layer ID to actual anchor value
+    if (linkSettings.anchor_layer_id) {
+      const anchorValue = anchorMap?.[linkSettings.anchor_layer_id] || linkSettings.anchor_layer_id;
+      if (linkHref) {
+        linkHref = `${linkHref}#${anchorValue}`;
+      } else {
+        linkHref = `#${anchorValue}`;
+      }
+    }
+
+    // Wrap content in <a> tag if we have a valid href
+    if (linkHref) {
+      const linkAttrs: string[] = [`href="${escapeHtml(linkHref)}"`];
+
+      if (linkSettings.target) {
+        linkAttrs.push(`target="${escapeHtml(linkSettings.target)}"`);
+      }
+
+      const linkRel = linkSettings.rel || (linkSettings.target === '_blank' ? 'noopener noreferrer' : '');
+      if (linkRel) {
+        linkAttrs.push(`rel="${escapeHtml(linkRel)}"`);
+      }
+
+      if (linkSettings.download) {
+        linkAttrs.push('download');
+      }
+
+      linkAttrs.push('class="contents"');
+
+      elementHtml = `<a ${linkAttrs.join(' ')}>${elementHtml}</a>`;
+    }
+  }
+
+  return elementHtml;
+}
+
+/**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
