@@ -23,7 +23,6 @@ import type {
   VisibilityConditionGroup,
   ConditionalVisibility,
   VisibilityOperator,
-  CollectionVariable
 } from '@/types';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
@@ -47,9 +46,11 @@ import {
   findDisplayField,
   getItemDisplayName,
   COMPARE_OPERATORS,
+  DATE_PRESET_OPTIONS,
+  isDatePreset,
   isDateFieldType,
 } from '@/lib/collection-field-utils';
-import { getCollectionVariable, isInputInsideFilter, findLayerById } from '@/lib/layer-utils';
+import { getCollectionVariable, isInputInsideFilter, resolveFilterInputId, findLayerById } from '@/lib/layer-utils';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { usePagesStore } from '@/stores/usePagesStore';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -417,7 +418,8 @@ export default function CollectionFiltersSettings({
   const handlePickInputForCondition = (groupId: string, conditionId: string, origin?: { x: number; y: number }) => {
     startElementPicker(
       (layerId: string) => {
-        patchCondition(groupId, conditionId, { inputLayerId: layerId, value: undefined });
+        const resolvedId = resolveFilterInputId(layerId, allLayers);
+        patchCondition(groupId, conditionId, { inputLayerId: resolvedId, value: undefined });
         stopElementPicker();
       },
       (layerId: string) => isInputInsideFilter(layerId, allLayers),
@@ -428,7 +430,8 @@ export default function CollectionFiltersSettings({
   const handlePickSecondInputForCondition = (groupId: string, conditionId: string, origin?: { x: number; y: number }) => {
     startElementPicker(
       (layerId: string) => {
-        patchCondition(groupId, conditionId, { inputLayerId2: layerId, value2: undefined });
+        const resolvedId = resolveFilterInputId(layerId, allLayers);
+        patchCondition(groupId, conditionId, { inputLayerId2: resolvedId, value2: undefined });
         stopElementPicker();
       },
       (layerId: string) => isInputInsideFilter(layerId, allLayers),
@@ -667,11 +670,37 @@ export default function CollectionFiltersSettings({
                         </SelectContent>
                       </Select>
                     ) : isDateFieldType(fieldType) ? (
-                      <Input
-                        type="date"
-                        value={condition.value || ''}
-                        onChange={(e) => handleValueChange(group.id, condition.id, e.target.value)}
-                      />
+                      <div className="flex flex-col gap-1.5">
+                        <Select
+                          value={isDatePreset(condition.value) ? condition.value : (condition.value ? '_custom' : '')}
+                          onValueChange={(v) => {
+                            if (v === '_custom') {
+                              handleValueChange(group.id, condition.id, '');
+                            } else {
+                              handleValueChange(group.id, condition.id, v);
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              {DATE_PRESET_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                              ))}
+                              <SelectItem value="_custom">Custom date...</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        {!isDatePreset(condition.value) && (
+                          <Input
+                            type="date"
+                            value={condition.value || ''}
+                            onChange={(e) => handleValueChange(group.id, condition.id, e.target.value)}
+                          />
+                        )}
+                      </div>
                     ) : fieldType === 'number' ? (
                       <Input
                         type="number"

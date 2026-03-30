@@ -223,6 +223,96 @@ export function operatorRequiresSecondValue(operator: VisibilityOperator): boole
 }
 
 // =============================================================================
+// Date Filter Presets
+// =============================================================================
+
+export interface DatePresetOption {
+  value: string;
+  label: string;
+}
+
+export const DATE_PRESET_OPTIONS: DatePresetOption[] = [
+  { value: '$today', label: 'Today' },
+  { value: '$this_week', label: 'This week' },
+  { value: '$this_month', label: 'This month' },
+  { value: '$this_year', label: 'This year' },
+  { value: '$past_week', label: 'In the past week' },
+  { value: '$past_month', label: 'In the past month' },
+  { value: '$past_year', label: 'In the past year' },
+];
+
+export function isDatePreset(value: string | undefined): boolean {
+  return !!value && value.startsWith('$');
+}
+
+/**
+ * Resolve a date preset string to a concrete YYYY-MM-DD date (or date pair for
+ * range presets). Returns `null` for non-preset values.
+ */
+export function resolveDatePreset(preset: string): { start: string; end: string } | null {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = now.getMonth();
+  const dd = now.getDate();
+
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  switch (preset) {
+    case '$today':
+      return { start: fmt(new Date(yyyy, mm, dd)), end: fmt(new Date(yyyy, mm, dd)) };
+    case '$this_week': {
+      const day = now.getDay();
+      const monday = new Date(yyyy, mm, dd - ((day + 6) % 7));
+      const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+      return { start: fmt(monday), end: fmt(sunday) };
+    }
+    case '$this_month':
+      return { start: fmt(new Date(yyyy, mm, 1)), end: fmt(new Date(yyyy, mm + 1, 0)) };
+    case '$this_year':
+      return { start: fmt(new Date(yyyy, 0, 1)), end: fmt(new Date(yyyy, 11, 31)) };
+    case '$past_week':
+      return { start: fmt(new Date(yyyy, mm, dd - 7)), end: fmt(new Date(yyyy, mm, dd)) };
+    case '$past_month':
+      return { start: fmt(new Date(yyyy, mm - 1, dd)), end: fmt(new Date(yyyy, mm, dd)) };
+    case '$past_year':
+      return { start: fmt(new Date(yyyy - 1, mm, dd)), end: fmt(new Date(yyyy, mm, dd)) };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve a filter value that may be a date preset into operator + concrete
+ * value(s) suitable for the filter API.  For presets, the operator is widened
+ * to a range comparison; for plain values it's returned as-is.
+ */
+export function resolveDateFilterValue(
+  operator: string,
+  value: string | undefined,
+  value2: string | undefined,
+): { operator: string; value: string; value2?: string } | null {
+  if (!value) return null;
+  if (!isDatePreset(value)) return { operator, value, value2 };
+  const range = resolveDatePreset(value);
+  if (!range) return { operator, value, value2 };
+
+  switch (operator) {
+    case 'is':
+      return range.start === range.end
+        ? { operator: 'is', value: range.start }
+        : { operator: 'is_between', value: range.start, value2: range.end };
+    case 'is_between':
+      return { operator: 'is_between', value: range.start, value2: range.end };
+    case 'is_before':
+      return { operator: 'is_before', value: range.start };
+    case 'is_after':
+      return { operator: 'is_after', value: range.end };
+    default:
+      return { operator: 'is_between', value: range.start, value2: range.end };
+  }
+}
+
+// =============================================================================
 // Field Lookup Utilities
 // =============================================================================
 

@@ -7,6 +7,7 @@ import { getAllPages } from '@/lib/repositories/pageRepository';
 import { getAllPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { renderCollectionItemsToHtml, loadTranslationsForLocale } from '@/lib/page-fetcher';
 import { noCache } from '@/lib/api-response';
+import { isDatePreset, resolveDateFilterValue } from '@/lib/collection-field-utils';
 import type { Layer, CollectionItem, CollectionItemWithValues } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -401,8 +402,14 @@ async function getFilteredItemIds(
   for (const group of filterGroups) {
     let currentIds = new Set(allItemIds);
 
-    for (const filter of group) {
+    for (let filter of group) {
       if (currentIds.size === 0) break;
+      if (filter.fieldType === 'date' && isDatePreset(filter.value)) {
+        const resolved = resolveDateFilterValue(filter.operator, filter.value, filter.value2);
+        if (resolved) {
+          filter = { ...filter, operator: resolved.operator, value: resolved.value, value2: resolved.value2 };
+        }
+      }
       const matchingForFilter = await getIdsMatchingFilter(client, filter, isPublished, [...currentIds]);
       currentIds = new Set([...currentIds].filter(id => matchingForFilter.has(id)));
     }
@@ -488,6 +495,8 @@ export async function POST(
       limit,
       offset = 0,
       localeCode,
+      collectionLayerClasses,
+      collectionLayerTag,
     } = body;
 
     if (!layerTemplate || !Array.isArray(layerTemplate)) {
@@ -537,16 +546,16 @@ export async function POST(
       // then hydrate only the requested page window.
       const sortValueByItem = await getFieldValuesForItems(sortBy, true, matchingIds);
       const sortedIds = [...matchingIds].sort((a, b) => {
-        const aVal = sortValueByItem.get(a) || '';
-        const bVal = sortValueByItem.get(b) || '';
-        const aNum = parseFloat(String(aVal));
-        const bNum = parseFloat(String(bVal));
+        const aStr = String(sortValueByItem.get(a) || '');
+        const bStr = String(sortValueByItem.get(b) || '');
+        const aNum = aStr.trim() !== '' ? Number(aStr) : NaN;
+        const bNum = bStr.trim() !== '' ? Number(bStr) : NaN;
         if (!isNaN(aNum) && !isNaN(bNum)) {
           return sortOrder === 'desc' ? bNum - aNum : aNum - bNum;
         }
         return sortOrder === 'desc'
-          ? String(bVal).localeCompare(String(aVal))
-          : String(aVal).localeCompare(String(bVal));
+          ? bStr.localeCompare(aStr)
+          : aStr.localeCompare(bStr);
       });
       pageItemIds = sortedIds.slice(pageOffset, pageOffset + pageLimit);
       if (pageItemIds.length > 0) {
@@ -602,6 +611,9 @@ export async function POST(
       collectionItemSlugs,
       locale,
       translations,
+      undefined,
+      collectionLayerClasses,
+      collectionLayerTag,
     );
 
     return noCache({

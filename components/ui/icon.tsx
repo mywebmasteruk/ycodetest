@@ -17,6 +17,7 @@ export interface IconProps extends React.SVGProps<SVGSVGElement> {
     | 'paintbrush' | 'swatch' | 'cube' | 'triangle-down' | 'triangle-right' | 'plus-circle' | 'plus-circle-solid' | 'detach' | 'email' | 'phone' | 'paperclip' | 'unlink' | 'map'
     | 'paragraph' | 'droplet' | 'expand' | 'collapse' | 'filter' | 'crosshair' | 'lightbox' | 'slider' | 'slide' | 'slides' | 'slide-button-prev' | 'slide-button-next'
     | 'slide-bullets' | 'slide-bullet' | 'slide-navigation' | 'slide-fraction' | 'loop-alternate' | 'loop-repeat' | 'listItem' | 'external-link'
+    | 'settings'
   );
 }
 
@@ -962,6 +963,9 @@ const ICONS: Record<IconProps['name'], React.ReactNode> = {
   ),
   'external-link': (
     <path d="M5,2 L5,3 L2.5,3 C1.72030388,3 1.07955132,3.59488808 1.00686658,4.35553999 L1,4.5 L1,9.5 C1,10.2796961 1.59488808,10.9204487 2.35553999,10.9931334 L2.5,11 L7.5,11 C8.27969612,11 8.92044868,10.4051119 8.99313342,9.64446001 L9,9.5 L9,7 L10,7 L10,9.5 C10,10.8254834 8.96846406,11.9100387 7.66437569,11.9946823 L7.5,12 L2.5,12 C1.1745166,12 0.089961328,10.9684641 0.00531767968,9.66437569 L0,9.5 L0,4.5 C0,3.1745166 1.03153594,2.08996133 2.33562431,2.00531768 L2.5,2 L5,2 Z M12,0 L12,5 L11,5 L11,1.753 L5.7,7.00090117 L5,6.29379439 L10.341,1 L7,1 L7,0 L12,0 Z" />
+  ),
+  settings: (
+    <path d="M3.0854 9C3.2913 8.4174 3.8469 8 4.5 8C5.1531 8 5.7087 8.4174 5.9147 9H11V10H5.9147C5.7087 10.5826 5.1531 11 4.5 11C3.8469 11 3.2913 10.5826 3.0854 10H1V9H3.0854ZM6.0854 5.5C6.2913 4.9174 6.8469 4.5 7.5 4.5C8.1531 4.5 8.7087 4.9174 8.9147 5.5H11V6.5H8.9147C8.7087 7.0826 8.1531 7.5 7.5 7.5C6.8469 7.5 6.2913 7.0826 6.0854 6.5H1V5.5H6.0854ZM3.0854 2C3.2913 1.4174 3.8469 1 4.5 1C5.1531 1 5.7087 1.4174 5.9147 2H11V3H5.9147C5.7087 3.5826 5.1531 4 4.5 4C3.8469 4 3.2913 3.5826 3.0854 3H1V2H3.0854Z" />
   ),
 };
 

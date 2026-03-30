@@ -742,7 +742,7 @@ export default function LeftSidebarPages({
 
   return (
     <>
-      <header className="py-5 flex justify-between">
+      <header className="py-5 flex justify-between shrink-0 sticky top-0 bg-linear-to-b from-background to-transparent z-20">
         <span className="font-medium">Pages</span>
         <div className="-my-1">
           <DropdownMenu onOpenChange={setIsMenuOpen}>

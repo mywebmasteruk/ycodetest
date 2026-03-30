@@ -123,12 +123,12 @@ export default function CollectionItemSheet({
 
   // Find name and slug fields for validation (only if editable in the form)
   const nameField = useMemo(
-    () => collectionFields.find(f => f.key === 'name' && f.fillable && !f.hidden),
+    () => collectionFields.find(f => f.key === 'name' && f.fillable),
     [collectionFields]
   );
 
   const slugField = useMemo(
-    () => collectionFields.find(f => f.key === 'slug' && f.fillable && !f.hidden),
+    () => collectionFields.find(f => f.key === 'slug' && f.fillable),
     [collectionFields]
   );
 
@@ -213,7 +213,7 @@ export default function CollectionItemSheet({
   useEffect(() => {
     // Only include fillable/visible fields in form state to avoid
     // sending computed fields (status, ID, timestamps) to the API
-    const editableFields = collectionFields.filter(f => f.fillable && !f.hidden);
+    const editableFields = collectionFields.filter(f => f.fillable);
 
     if (editingItem) {
       const values: Record<string, any> = {};
@@ -550,7 +550,7 @@ export default function CollectionItemSheet({
           >
             <div className="flex-1 flex flex-col gap-6">
               {collectionFields
-                .filter(f => f.fillable && !f.hidden)
+                .filter(f => f.fillable)
                 .map((field) => (
                   <FormField
                     key={field.id}

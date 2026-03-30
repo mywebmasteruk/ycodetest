@@ -126,19 +126,17 @@ export async function GET(
       } else {
         // Sort by field value (globally, before pagination)
         items = [...items].sort((a, b) => {
-          const aValue = a.values[sortBy] || '';
-          const bValue = b.values[sortBy] || '';
+          const aStr = String(a.values[sortBy] || '');
+          const bStr = String(b.values[sortBy] || '');
 
-          // Try numeric comparison
-          const aNum = parseFloat(String(aValue));
-          const bNum = parseFloat(String(bValue));
+          const aNum = aStr.trim() !== '' ? Number(aStr) : NaN;
+          const bNum = bStr.trim() !== '' ? Number(bStr) : NaN;
 
           if (!isNaN(aNum) && !isNaN(bNum)) {
             return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
           }
 
-          // String comparison
-          const comparison = String(aValue).localeCompare(String(bValue));
+          const comparison = aStr.localeCompare(bStr);
           return sortOrder === 'asc' ? comparison : -comparison;
         });
       }

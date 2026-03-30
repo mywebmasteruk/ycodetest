@@ -639,11 +639,33 @@ export default function Canvas({
   }, [iframeReady, onCanvasClick]);
 
   // Content size reporting (height always, width when callback provided)
+  // Uses a stabilization delay for height decreases to prevent transient
+  // drops (e.g. iframe reloads inside the canvas) from causing scroll jumps.
+  const lastReportedHeightRef = useRef(0);
+
   useEffect(() => {
     if (!iframeReady || !iframeRef.current || !onContentHeightChange) return;
 
     const doc = iframeRef.current.contentDocument;
     if (!doc) return;
+
+    let shrinkTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const reportHeight = (height: number) => {
+      clearTimeout(shrinkTimer);
+      const clamped = Math.max(height, 100);
+
+      if (clamped >= lastReportedHeightRef.current) {
+        lastReportedHeightRef.current = clamped;
+        onContentHeightChange(clamped);
+      } else {
+        // Delay height decreases so transient dips don't cause scroll jumps
+        shrinkTimer = setTimeout(() => {
+          lastReportedHeightRef.current = clamped;
+          onContentHeightChange(clamped);
+        }, 150);
+      }
+    };
 
     const measureContent = () => {
       const body = doc.body;
@@ -667,7 +689,7 @@ export default function Canvas({
           });
 
           onContentWidthChange(maxChildWidth);
-          onContentHeightChange(Math.max(maxChildBottom, 100));
+          reportHeight(maxChildBottom);
           return;
         }
       }
@@ -679,15 +701,19 @@ export default function Canvas({
         doc.documentElement?.scrollHeight || 0,
         doc.documentElement?.offsetHeight || 0
       );
-      onContentHeightChange(Math.max(height, 100));
+      reportHeight(height);
     };
 
     // Measure after render
     const timeoutId = setTimeout(measureContent, 100);
 
-    // Observe for changes
+    // Debounce observer to avoid measuring during transient DOM states
+    let observerTimer: ReturnType<typeof setTimeout> | undefined;
     const observer = new MutationObserver(() => {
-      requestAnimationFrame(measureContent);
+      clearTimeout(observerTimer);
+      observerTimer = setTimeout(() => {
+        requestAnimationFrame(measureContent);
+      }, 80);
     });
 
     observer.observe(doc.body, {
@@ -698,6 +724,8 @@ export default function Canvas({
 
     return () => {
       clearTimeout(timeoutId);
+      clearTimeout(shrinkTimer);
+      clearTimeout(observerTimer);
       observer.disconnect();
     };
   }, [iframeReady, onContentHeightChange, onContentWidthChange, resolvedLayers]);

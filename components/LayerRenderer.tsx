@@ -12,6 +12,7 @@ import type { Layer, Locale, ComponentVariable, FormSettings, LinkSettings, Brea
 import type { UseLiveLayerUpdatesReturn } from '@/hooks/use-live-layer-updates';
 import type { UseLiveComponentUpdatesReturn } from '@/hooks/use-live-component-updates';
 import { getLayerHtmlTag, getClassesString, getText, resolveFieldValue, isTextEditable, isTextContentLayer, isRichTextLayer, getCollectionVariable, evaluateVisibility, findAncestorByName, filterDisabledSliderLayers, getLayerCmsFieldBinding } from '@/lib/layer-utils';
+import { getMapIframeProps, DEFAULT_MAP_SETTINGS, resolveMarkerColor } from '@/lib/map-utils';
 import { SWIPER_CLASS_MAP, SWIPER_DATA_ATTR_MAP } from '@/lib/templates/utilities';
 import { useCanvasSlider } from '@/hooks/use-canvas-slider';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
@@ -35,6 +36,7 @@ import { useCollectionLayerStore } from '@/stores/useCollectionLayerStore';
 import { useFilterStore } from '@/stores/useFilterStore';
 import { useCollectionsStore } from '@/stores/useCollectionsStore';
 import { useAssetsStore } from '@/stores/useAssetsStore';
+import { useColorVariablesStore } from '@/stores/useColorVariablesStore';
 import { ShimmerSkeleton } from '@/components/ui/shimmer-skeleton';
 import { combineBgValues, mergeStaticBgVars } from '@/lib/tailwind-class-mapper';
 import { clsx } from 'clsx';
@@ -120,6 +122,8 @@ interface LayerRendererProps {
   ancestorComponentIds?: Set<string>;
   /** Whether these layers are direct children of a slides wrapper (adds swiper-slide class) */
   isSlideChild?: boolean;
+  /** Server-side settings (for preview/published pages where Zustand store is not available) */
+  serverSettings?: Record<string, unknown>;
 }
 
 const LayerRenderer: React.FC<LayerRendererProps> = ({
@@ -164,6 +168,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
   components: componentsProp,
   ancestorComponentIds,
   isSlideChild: isSlideChildProp,
+  serverSettings,
 }) => {
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>('');
@@ -236,6 +241,8 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
               limit={layer._filterConfig!.limit}
               paginationMode={layer._filterConfig!.paginationMode}
               layerTemplate={layer._filterConfig!.layerTemplate}
+              collectionLayerClasses={layer._filterConfig!.collectionLayerClasses}
+              collectionLayerTag={layer._filterConfig!.collectionLayerTag}
             >
               {content}
             </FilterableCollection>
@@ -302,6 +309,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
         components={componentsProp}
         ancestorComponentIds={ancestorComponentIds}
         isSlideChild={isSlideChildProp}
+        serverSettings={serverSettings}
       />
     );
   };
@@ -362,6 +370,7 @@ const LayerItem: React.FC<{
   components?: Component[];
   ancestorComponentIds?: Set<string>;
   isSlideChild?: boolean;
+  serverSettings?: Record<string, unknown>;
 }> = ({
   layer,
   isEditMode,
@@ -410,6 +419,7 @@ const LayerItem: React.FC<{
   components: componentsProp,
   ancestorComponentIds,
   isSlideChild,
+  serverSettings,
 }) => {
   // Subscribe to selection state from the store for reactive updates without
   // forcing the entire LayerRenderer tree to re-render when selection changes
@@ -444,7 +454,9 @@ const LayerItem: React.FC<{
   }, [ancestorComponentIds, layer.componentId]);
   const getAssetFromStore = useAssetsStore((state) => state.getAsset);
   const assetsById = useAssetsStore((state) => state.assetsById);
-  const timezone = useSettingsStore((state) => state.settingsByKey.timezone as string | null) ?? 'UTC';
+  const settingsByKey = useSettingsStore((state) => state.settingsByKey);
+  const colorVariables = useColorVariablesStore((state) => state.colorVariables);
+  const timezone = (settingsByKey.timezone as string | null) ?? 'UTC';
 
   // Create asset resolver that checks pre-resolved assets first (SSR), then falls back to store
   const getAsset = useCallback((id: string) => {
@@ -498,10 +510,11 @@ const LayerItem: React.FC<{
     anchorMap,
     resolvedAssets,
     components: componentsProp,
+    serverSettings,
   // selectedLayerId and hoveredLayerId kept in the object for SSR/published mode
   // but excluded from deps so changes don't cascade re-renders in edit mode.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isEditMode, isPublished, onLayerClick, onLayerUpdate, onLayerHover, pageId, collectionLayerData, collectionLayerItemId, effectiveLayerDataMap, pageCollectionItemId, pageCollectionItemData, hiddenLayerInfo, editorHiddenLayerIds, editorBreakpoint, currentLocale, availableLocales, localeSelectorFormat, liveLayerUpdates, liveComponentUpdates, isInsideForm, parentFormSettings, pages, folders, collectionItemSlugs, isPreview, translations, anchorMap, resolvedAssets, componentsProp]);
+  }), [isEditMode, isPublished, onLayerClick, onLayerUpdate, onLayerHover, pageId, collectionLayerData, collectionLayerItemId, effectiveLayerDataMap, pageCollectionItemId, pageCollectionItemData, hiddenLayerInfo, editorHiddenLayerIds, editorBreakpoint, currentLocale, availableLocales, localeSelectorFormat, liveLayerUpdates, liveComponentUpdates, isInsideForm, parentFormSettings, pages, folders, collectionItemSlugs, isPreview, translations, anchorMap, resolvedAssets, componentsProp, serverSettings]);
 
   // Callback for rendering embedded components inside rich-text content
   // Clicks on the embedded component's internal layers should select the text layer
@@ -684,15 +697,27 @@ const LayerItem: React.FC<{
     // Build the name map from DOM: inputLayerId → name attribute (or stripped ID)
     const nameMap: Record<string, string> = {};
     const reverseMap: Record<string, string> = {};
+    const checkboxGroupNames: Record<string, string> = {};
     const inputs = container.querySelectorAll('input, select, textarea');
     inputs.forEach(el => {
-      const inputLayerId = (el as HTMLElement).closest('[data-layer-id]')?.getAttribute('data-layer-id');
+      const inputEl = el as HTMLInputElement;
+      const inputLayerId = inputEl.closest('[data-layer-id]')?.getAttribute('data-layer-id');
       if (!inputLayerId) return;
-      const nameAttr = (el as HTMLInputElement).getAttribute('name');
+      const nameAttr = inputEl.getAttribute('name');
       const paramName = nameAttr || (inputLayerId.startsWith('lyr-') ? inputLayerId.slice(4) : inputLayerId);
       nameMap[inputLayerId] = paramName;
       reverseMap[paramName] = inputLayerId;
+      if (inputEl.type === 'checkbox' || inputEl.type === 'radio') {
+        const cbMatch = inputLayerId.match(/^(.+)-(?:cb|rb)-.+-input$/);
+        if (cbMatch) {
+          checkboxGroupNames[cbMatch[1]] = (nameAttr || '').replace(/\[\]$/, '') || cbMatch[1];
+        }
+      }
     });
+    for (const [baseId, baseName] of Object.entries(checkboxGroupNames)) {
+      nameMap[baseId] = baseName;
+      reverseMap[baseName] = baseId;
+    }
     const inputLayerIds = Object.keys(nameMap);
     store.setNameMap(nameMap);
 
@@ -709,9 +734,20 @@ const LayerItem: React.FC<{
         const directEl = container.querySelector(`input[data-layer-id="${inputLayerId}"], select[data-layer-id="${inputLayerId}"], textarea[data-layer-id="${inputLayerId}"]`) as HTMLInputElement | null;
         inputEl = directEl;
       }
-      if (!inputEl) return;
+      if (!inputEl) {
+        const cbInputs = container.querySelectorAll(
+          `[data-layer-id^="${inputLayerId}-cb-"] input[type="checkbox"], [data-layer-id^="${inputLayerId}-rb-"] input[type="radio"]`
+        );
+        if (cbInputs.length > 0) {
+          const checkedSet = new Set(value.split(','));
+          cbInputs.forEach(cb => {
+            (cb as HTMLInputElement).checked = checkedSet.has((cb as HTMLInputElement).value);
+          });
+        }
+        return;
+      }
       if (inputEl.type === 'checkbox') {
-        inputEl.checked = value === 'true';
+        inputEl.checked = value === inputEl.value || value === 'true';
       } else {
         inputEl.value = value;
       }
@@ -736,6 +772,7 @@ const LayerItem: React.FC<{
     const collectInputValues = () => {
       const nameMap: Record<string, string> = {};
       const inputValues: Record<string, string> = {};
+      const checkboxGroups: Record<string, string[]> = {};
       const inputs = container.querySelectorAll('input, select, textarea');
       inputs.forEach(el => {
         const inputEl = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -743,9 +780,24 @@ const LayerItem: React.FC<{
         if (!inputLayerId) return;
         const nameAttr = inputEl.getAttribute('name');
         if (nameAttr) nameMap[inputLayerId] = nameAttr;
-        const value = inputEl.type === 'checkbox' ? (inputEl as HTMLInputElement).checked.toString() : inputEl.value;
-        inputValues[inputLayerId] = value;
+        if (inputEl.type === 'checkbox') {
+          const checked = (inputEl as HTMLInputElement).checked;
+          const val = checked ? ((inputEl as HTMLInputElement).value || 'true') : '';
+          inputValues[inputLayerId] = val;
+          const cbMatch = inputLayerId.match(/^(.+)-(?:cb|rb)-.+-input$/);
+          if (cbMatch) {
+            const baseId = cbMatch[1];
+            if (!checkboxGroups[baseId]) checkboxGroups[baseId] = [];
+            if (val) checkboxGroups[baseId].push(val);
+            if (nameAttr) nameMap[baseId] = nameAttr.replace(/\[\]$/, '');
+          }
+        } else {
+          inputValues[inputLayerId] = inputEl.value;
+        }
       });
+      for (const [baseId, values] of Object.entries(checkboxGroups)) {
+        inputValues[baseId] = values.join(',');
+      }
       setFilterValues(filterLayerId, inputValues);
       if (Object.keys(nameMap).length > 0) {
         useFilterStore.getState().setNameMap(nameMap);
@@ -1531,26 +1583,32 @@ const LayerItem: React.FC<{
 
     // Convert string boolean values to actual booleans and map HTML attrs to JSX
     const normalizedAttributes = Object.fromEntries(
-      Object.entries(otherAttributes).map(([key, value]) => {
-        // Map HTML attribute names to JSX equivalents
-        const jsxKey = htmlToJsxAttrMap[key] || key;
+      Object.entries(otherAttributes)
+        .filter(([key]) => {
+          // React uses defaultValue/value on <select>, not selected on <option>
+          if (htmlTag === 'option' && key === 'selected') return false;
+          return true;
+        })
+        .map(([key, value]) => {
+          // Map HTML attribute names to JSX equivalents
+          const jsxKey = htmlToJsxAttrMap[key] || key;
 
-        // If value is already a boolean, keep it
-        if (typeof value === 'boolean') {
+          // If value is already a boolean, keep it
+          if (typeof value === 'boolean') {
+            return [jsxKey, value];
+          }
+          // If value is a string that looks like a boolean, convert it
+          if (typeof value === 'string') {
+            if (value === 'true') {
+              return [jsxKey, true];
+            }
+            if (value === 'false') {
+              return [jsxKey, false];
+            }
+          }
+          // For all other values, keep them as-is
           return [jsxKey, value];
-        }
-        // If value is a string that looks like a boolean, convert it
-        if (typeof value === 'string') {
-          if (value === 'true') {
-            return [jsxKey, true];
-          }
-          if (value === 'false') {
-            return [jsxKey, false];
-          }
-        }
-        // For all other values, keep them as-is
-        return [jsxKey, value];
-      })
+        })
     );
 
     // Parse style string to object if needed (for display: contents from collection wrappers)
@@ -1759,6 +1817,16 @@ const LayerItem: React.FC<{
       Object.entries(layer.settings.customAttributes).forEach(([name, value]) => {
         elementProps[name] = value;
       });
+    }
+
+    // Select with placeholder: set defaultValue so React shows the placeholder option
+    if (htmlTag === 'select' && !elementProps.value) {
+      const hasPlaceholder = effectiveLayer.children?.some(
+        (c) => c.name === 'option' && c.settings?.isPlaceholder
+      );
+      if (hasPlaceholder) {
+        elementProps.defaultValue = '';
+      }
     }
 
     // Add editor event handlers if in edit mode (but not for context menu trigger)
@@ -2019,9 +2087,17 @@ const LayerItem: React.FC<{
       }
 
       if (isEditMode && layer.settings?.optionsSource?.collectionId) {
+        const placeholderChild = effectiveLayer.children?.find(
+          (c) => c.name === 'option' && c.settings?.isPlaceholder
+        );
+        const editPlaceholder = (
+          placeholderChild?.variables?.text?.type === 'dynamic_text'
+            ? placeholderChild.variables.text.data.content
+            : null
+        ) || '(Options from collection)';
         return (
           <Tag {...elementProps}>
-            <option disabled value="">(Options from collection)</option>
+            <option disabled value="">{editPlaceholder}</option>
           </Tag>
         );
       }
@@ -2249,6 +2325,69 @@ const LayerItem: React.FC<{
           }}
           title={`Code Embed ${layer.id}`}
         />
+      );
+    }
+
+    // Handle Map layers — provider-aware iframe
+    if (layer.name === 'map') {
+      const mapSettings = { ...DEFAULT_MAP_SETTINGS, ...layer.settings?.map,
+        mapbox: { ...DEFAULT_MAP_SETTINGS.mapbox, ...layer.settings?.map?.mapbox },
+        google: { ...DEFAULT_MAP_SETTINGS.google, ...layer.settings?.map?.google },
+      };
+      const provider = mapSettings.provider;
+      const tokenKey = provider === 'google' ? 'google_maps_embed_api_key' : 'mapbox_access_token';
+      const mapToken = (settingsByKey[tokenKey] || serverSettings?.[tokenKey]) as string | undefined;
+
+      if (!mapToken) {
+        const label = provider === 'google' ? 'Google Map API key' : 'Mapbox token';
+        return (
+          <div
+            data-layer-id={layer.id}
+            data-layer-type="map"
+            className={fullClassName}
+            style={mergedStyle}
+            {...(isEditMode && !isEditing ? elementProps : {})}
+          >
+            <div className="flex items-center justify-center h-full bg-muted text-muted-foreground text-xs">
+              {label} not configured
+            </div>
+          </div>
+        );
+      }
+
+      const cvList = colorVariables.length > 0
+        ? colorVariables
+        : (serverSettings?.color_variables as import('@/types').ColorVariable[] || []);
+      const resolvedSettings = {
+        ...mapSettings,
+        markerColor: resolveMarkerColor(mapSettings.markerColor, cvList),
+      };
+      const iframeProps = getMapIframeProps(resolvedSettings, mapToken);
+
+      return (
+        <div
+          data-layer-id={layer.id}
+          data-layer-type="map"
+          className={fullClassName}
+          style={mergedStyle}
+          {...(isEditMode && !isEditing ? elementProps : {})}
+        >
+          <iframe
+            {...(iframeProps.type === 'src'
+              ? { src: iframeProps.src, referrerPolicy: 'no-referrer-when-downgrade' as const }
+              : { srcDoc: iframeProps.srcDoc, sandbox: 'allow-scripts allow-same-origin' }
+            )}
+            className={isEditMode ? 'pointer-events-none' : ''}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              display: 'block',
+            }}
+            title="Map"
+            suppressHydrationWarning
+          />
+        </div>
       );
     }
 
@@ -2497,6 +2636,7 @@ const LayerItem: React.FC<{
               components={componentsProp}
               ancestorComponentIds={effectiveAncestorIds}
               isSlideChild={layer.name === 'slides'}
+              serverSettings={serverSettings}
             />
           )}
         </Tag>
@@ -2703,6 +2843,7 @@ const LayerItem: React.FC<{
                     components={componentsProp}
                     ancestorComponentIds={effectiveAncestorIds}
                     isSlideChild={layer.name === 'slides'}
+                    serverSettings={serverSettings}
                   />
                 )}
               </Tag>
@@ -2768,6 +2909,7 @@ const LayerItem: React.FC<{
               parentFormSettings={htmlTag === 'form' ? layer.settings?.form : parentFormSettings}
               components={componentsProp}
               ancestorComponentIds={effectiveAncestorIds}
+              serverSettings={serverSettings}
             />
           )}
 
@@ -2839,6 +2981,7 @@ const LayerItem: React.FC<{
             components={componentsProp}
             ancestorComponentIds={effectiveAncestorIds}
             isSlideChild={layer.name === 'slides'}
+            serverSettings={serverSettings}
           />
         )}
       </Tag>

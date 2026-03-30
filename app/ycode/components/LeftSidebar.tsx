@@ -355,7 +355,11 @@ const LeftSidebar = React.memo(function LeftSidebar({
               </div>
             </TabsContent>
 
-            <TabsContent value="pages" forceMount>
+            <TabsContent
+              value="pages"
+              className="flex flex-col min-h-0 overflow-y-auto no-scrollbar"
+              forceMount
+            >
               <LeftSidebarPages
                 pages={pages}
                 folders={folders}

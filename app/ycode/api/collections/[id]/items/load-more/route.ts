@@ -5,7 +5,7 @@ import { getAllPages } from '@/lib/repositories/pageRepository';
 import { getAllPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { renderCollectionItemsToHtml, loadTranslationsForLocale } from '@/lib/page-fetcher';
 import { noCache } from '@/lib/api-response';
-import type { Layer, Page, PageFolder } from '@/types';
+import type { Layer } from '@/types';
 
 // Disable caching for this route
 export const dynamic = 'force-dynamic';
@@ -42,6 +42,8 @@ export async function POST(
       collectionLayerId,
       published = true,
       localeCode,
+      collectionLayerClasses,
+      collectionLayerTag,
     } = body;
 
     // Validate required fields
@@ -122,7 +124,10 @@ export async function POST(
       folders,
       collectionItemSlugs,
       locale,
-      translations
+      translations,
+      undefined,
+      collectionLayerClasses,
+      collectionLayerTag,
     );
 
     return noCache({

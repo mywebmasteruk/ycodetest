@@ -2145,7 +2145,7 @@ const CMS = React.memo(function CMS() {
               setShowItemSheet(false);
               setEditingItem(null);
               if (selectedCollectionId) {
-                navigateToCollection(selectedCollectionId);
+                navigateToCollection(selectedCollectionId, currentPage, searchQuery || undefined, pageSize);
               }
             }
           }}
@@ -2155,7 +2155,7 @@ const CMS = React.memo(function CMS() {
             setShowItemSheet(false);
             setEditingItem(null);
             if (selectedCollectionId) {
-              navigateToCollection(selectedCollectionId);
+              navigateToCollection(selectedCollectionId, currentPage, searchQuery || undefined, pageSize);
             }
           }}
         />

@@ -232,7 +232,7 @@ export default function InputSettings({ layer, onLayerUpdate }: InputSettingsPro
               </div>
             )}
 
-            {/* Placeholder - for input and textarea */}
+            {/* Placeholder - for input and textarea (select placeholder is in SelectOptionsSettings) */}
             {(isInputLayer || isTextareaLayer) && (
               <div className="grid grid-cols-3">
                 <Label variant="muted">Placeholder</Label>

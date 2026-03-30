@@ -603,7 +603,7 @@ const PageSettingsPanel = React.forwardRef<PageSettingsPanelHandle, PageSettings
         nameInputRef.current?.select();
       });
     }
-     
+
   }, [currentPage, isErrorPage]);
 
   // Auto-generate slug from name for new pages (only if not index or error page)
@@ -1142,7 +1142,7 @@ const PageSettingsPanel = React.forwardRef<PageSettingsPanelHandle, PageSettings
         <Tabs
           value={activeTab}
           onValueChange={handleTabChange}
-          className="flex-1 flex flex-col px-5 py-3.5"
+          className="flex-1 flex flex-col px-5 !py-0 overflow-y-auto"
         >
           <TabsList className="w-full">
             <TabsTrigger value="general">General</TabsTrigger>
@@ -1153,7 +1153,7 @@ const PageSettingsPanel = React.forwardRef<PageSettingsPanelHandle, PageSettings
           <hr className="my-2" />
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-scroll no-scrollbar pb-5">
             {error && (
               <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm">
                 {error}

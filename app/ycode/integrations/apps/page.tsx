@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,7 @@ import { toast } from 'sonner';
 
 import type { AppCategory } from '@/lib/apps/registry';
 import { APP_CATEGORIES } from '@/lib/apps/registry';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 import { MAILERLITE_SUBSCRIBER_FIELDS } from '@/lib/apps/mailerlite/types';
 import type { MailerLiteConnection, MailerLiteFieldMapping } from '@/lib/apps/mailerlite/types';
 
@@ -67,6 +69,79 @@ interface FormSummary {
   submission_count: number;
   new_count: number;
 }
+
+interface TokenAppState {
+  token: string;
+  savedToken: string;
+  isSaving: boolean;
+  isConnected: boolean;
+  isLoading: boolean;
+  showDisconnect: boolean;
+}
+
+interface TokenAppConfig {
+  appId: string;
+  label: string;
+  settingKey: string;
+  tokenKey: string;
+  placeholder: string;
+  description: React.ReactNode;
+  dashboardUrl: string;
+  dashboardLabel: string;
+  disconnectMessage: string;
+}
+
+const TOKEN_APP_CONFIGS: Record<string, TokenAppConfig> = {
+  mapbox: {
+    appId: 'mapbox',
+    label: 'Mapbox',
+    settingKey: 'mapbox_access_token',
+    tokenKey: 'access_token',
+    placeholder: 'pk.eyJ1Ijo...',
+    description: 'Required for Map elements using Mapbox.',
+    dashboardUrl: 'https://account.mapbox.com/access-tokens/',
+    dashboardLabel: 'Mapbox dashboard',
+    disconnectMessage: 'This will remove your access token. Map elements using Mapbox will stop rendering until a new token is configured.',
+  },
+  'google-maps-embed': {
+    appId: 'google-maps-embed',
+    label: 'Google Map',
+    settingKey: 'google_maps_embed_api_key',
+    tokenKey: 'api_key',
+    placeholder: 'AIzaSy...',
+    description: (
+      <>
+        Required for Map elements using Google Embedded Map. Make sure to enable the{' '}
+        <a
+          href="https://console.cloud.google.com/apis/library/maps-embed-backend.googleapis.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-foreground underline"
+        >Maps Embed API</a>
+        {' '}and{' '}
+        <a
+          href="https://console.cloud.google.com/apis/library/places.googleapis.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-foreground underline"
+        >Places API</a>
+        {' '}on your project.
+      </>
+    ),
+    dashboardUrl: 'https://console.cloud.google.com/apis/credentials',
+    dashboardLabel: 'Google Cloud Console',
+    disconnectMessage: 'This will remove your API key. Map elements using Google Embedded Map will stop rendering until a new key is configured.',
+  },
+};
+
+const DEFAULT_TOKEN_APP_STATE: TokenAppState = {
+  token: '',
+  savedToken: '',
+  isSaving: false,
+  isConnected: false,
+  isLoading: false,
+  showDisconnect: false,
+};
 
 // =============================================================================
 // App Card Component
@@ -97,7 +172,7 @@ function AppCard({ app, onOpenSettings }: AppCardProps) {
           alt={`${app.name} logo`}
           width={24}
           height={24}
-          className="object-contain"
+          className="size-6 object-contain rounded-sm"
         />
       </div>
 
@@ -105,7 +180,7 @@ function AppCard({ app, onOpenSettings }: AppCardProps) {
         <div className="flex items-center gap-2 mb-0.5">
           <span className="font-medium text-sm">{app.name}</span>
           {app.connected && (
-            <Badge variant="default" className="text-[10px]">
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
               Connected
             </Badge>
           )}
@@ -128,10 +203,19 @@ function AppCard({ app, onOpenSettings }: AppCardProps) {
 // =============================================================================
 
 export default function AppsPage() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const updateSetting = useSettingsStore((s) => s.updateSetting);
+  const getSettingByKey = useSettingsStore((s) => s.getSettingByKey);
+
   // App list state
   const [apps, setApps] = useState<AppWithStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState<AppCategory>('popular');
+  const validCategories = new Set(APP_CATEGORIES.map((c) => c.value));
+  const [selectedCategory, setSelectedCategory] = useState<AppCategory>(() => {
+    const typeParam = searchParams.get('type') as AppCategory | null;
+    return typeParam && validCategories.has(typeParam) ? typeParam : 'popular';
+  });
 
   // Sheet state
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -143,6 +227,9 @@ export default function AppsPage() {
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+
+  // Token-based app state (Mapbox, Google Map, etc.)
+  const [tokenApps, setTokenApps] = useState<Record<string, TokenAppState>>({});
 
   // Connections state
   const [connections, setConnections] = useState<MailerLiteConnection[]>([]);
@@ -170,6 +257,33 @@ export default function AppsPage() {
   // Delete connection state
   const [connectionToDelete, setConnectionToDelete] = useState<MailerLiteConnection | null>(null);
 
+  const updateAppStatus = (appId: string, connected: boolean) => {
+    setApps((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, connected } : a))
+    );
+  };
+
+  /** Build URL with optional type and app params */
+  const buildUrl = useCallback(
+    (params: { type?: string; app?: string | null }) => {
+      const sp = new URLSearchParams();
+      const type = params.type ?? selectedCategory;
+      if (type && type !== 'popular') sp.set('type', type);
+      if (params.app) sp.set('app', params.app);
+      const qs = sp.toString();
+      return qs ? `${pathname}?${qs}` : pathname;
+    },
+    [pathname, selectedCategory]
+  );
+
+  const handleCategoryChange = useCallback(
+    (value: AppCategory) => {
+      setSelectedCategory(value);
+      window.history.replaceState(null, '', buildUrl({ type: value }));
+    },
+    [buildUrl]
+  );
+
   // =========================================================================
   // Load apps on mount
   // =========================================================================
@@ -178,12 +292,28 @@ export default function AppsPage() {
     fetchApps();
   }, []);
 
+  // Auto-open app settings from ?app= query param (e.g. /ycode/integrations/apps?app=mapbox)
+  useEffect(() => {
+    if (isLoading) return;
+    const appParam = searchParams.get('app');
+    if (appParam && apps.some((a) => a.id === appParam)) {
+      openAppSettings(appParam);
+    }
+  }, [isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchApps = async () => {
     try {
       const response = await fetch('/ycode/api/apps');
       const result = await response.json();
       if (result.data) {
-        setApps(result.data);
+        const enriched = (result.data as AppWithStatus[]).map((app) => {
+          const config = TOKEN_APP_CONFIGS[app.id];
+          if (config && !app.connected && getSettingByKey(config.settingKey)) {
+            return { ...app, connected: true };
+          }
+          return app;
+        });
+        setApps(enriched);
       }
     } catch (error) {
       console.error('Failed to fetch apps:', error);
@@ -198,15 +328,19 @@ export default function AppsPage() {
 
   const openAppSettings = (appId: string) => {
     setSelectedAppId(appId);
+    window.history.replaceState(null, '', buildUrl({ app: appId }));
 
     if (appId === 'mailerlite') {
       loadMailerLiteSettings();
       loadGroupsAndForms();
+    } else if (TOKEN_APP_CONFIGS[appId]) {
+      loadTokenApp(appId);
     }
   };
 
   const closeAppSettings = () => {
     setSelectedAppId(null);
+    window.history.replaceState(null, '', buildUrl({ app: null }));
     // Reset MailerLite state
     setApiKey('');
     setSavedApiKey('');
@@ -214,6 +348,8 @@ export default function AppsPage() {
     setConnections([]);
     setExpandedConnectionId(null);
     resetConnectionForm();
+    // Reset token app state
+    setTokenApps({});
   };
 
   // =========================================================================
@@ -285,10 +421,7 @@ export default function AppsPage() {
         setSavedApiKey(apiKey.trim());
         setIsConnected(true);
         toast.success('API key saved');
-        // Update app status in the list
-        setApps((prev) =>
-          prev.map((a) => (a.id === 'mailerlite' ? { ...a, connected: true } : a))
-        );
+        updateAppStatus('mailerlite', true);
       } else {
         toast.error(result.error || 'Failed to save API key');
       }
@@ -311,11 +444,91 @@ export default function AppsPage() {
       setConnections([]);
       setShowDisconnectDialog(false);
       toast.success('MailerLite disconnected');
-      // Update app status in the list
-      setApps((prev) =>
-        prev.map((a) => (a.id === 'mailerlite' ? { ...a, connected: false } : a))
-      );
+      updateAppStatus('mailerlite', false);
     } catch (error) {
+      toast.error('Failed to disconnect');
+    }
+  };
+
+  // =========================================================================
+  // Token-based app settings (Mapbox, Google Map, etc.)
+  // =========================================================================
+
+  const getTokenAppState = (appId: string): TokenAppState =>
+    tokenApps[appId] || DEFAULT_TOKEN_APP_STATE;
+
+  const updateTokenAppState = (appId: string, updates: Partial<TokenAppState>) => {
+    setTokenApps((prev) => ({
+      ...prev,
+      [appId]: { ...(prev[appId] || DEFAULT_TOKEN_APP_STATE), ...updates },
+    }));
+  };
+
+  const loadTokenApp = async (appId: string) => {
+    const config = TOKEN_APP_CONFIGS[appId];
+    if (!config) return;
+
+    updateTokenAppState(appId, { isLoading: true });
+    try {
+      const response = await fetch(`/ycode/api/apps/${appId}/settings`);
+      const result = await response.json();
+      const value = result.data?.[config.tokenKey];
+
+      if (value) {
+        updateTokenAppState(appId, { token: value, savedToken: value, isConnected: true });
+      }
+    } catch (error) {
+      console.error(`Failed to load ${config.label} settings:`, error);
+    } finally {
+      updateTokenAppState(appId, { isLoading: false });
+    }
+  };
+
+  const handleSaveTokenApp = async (appId: string) => {
+    const config = TOKEN_APP_CONFIGS[appId];
+    const state = getTokenAppState(appId);
+    if (!config || !state.token.trim()) return;
+
+    updateTokenAppState(appId, { isSaving: true });
+    try {
+      const response = await fetch(`/ycode/api/apps/${appId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [config.tokenKey]: state.token.trim() }),
+      });
+
+      if (response.ok) {
+        updateTokenAppState(appId, {
+          savedToken: state.token.trim(),
+          isConnected: true,
+        });
+        updateAppStatus(appId, true);
+        updateSetting(config.settingKey, state.token.trim());
+      } else {
+        toast.error('Failed to save token');
+      }
+    } catch {
+      toast.error('Failed to save token');
+    } finally {
+      updateTokenAppState(appId, { isSaving: false });
+    }
+  };
+
+  const handleDisconnectTokenApp = async (appId: string) => {
+    const config = TOKEN_APP_CONFIGS[appId];
+    if (!config) return;
+
+    try {
+      await fetch(`/ycode/api/apps/${appId}/settings`, { method: 'DELETE' });
+      updateTokenAppState(appId, {
+        token: '',
+        savedToken: '',
+        isConnected: false,
+        showDisconnect: false,
+      });
+      updateAppStatus(appId, false);
+      updateSetting(config.settingKey, null);
+    } catch {
       toast.error('Failed to disconnect');
     }
   };
@@ -687,9 +900,9 @@ export default function AppsPage() {
   // Derived data
   const connectedApps = apps.filter((app) => app.connected);
   const connectedIds = new Set(connectedApps.map((app) => app.id));
-  const filteredApps = apps.filter(
-    (app) => !connectedIds.has(app.id) && app.categories.includes(selectedCategory)
-  );
+  const filteredApps = apps
+    .filter((app) => !connectedIds.has(app.id) && app.categories.includes(selectedCategory))
+    .sort((a, b) => Number(b.implemented) - Number(a.implemented));
 
   if (isLoading) {
     return (
@@ -737,9 +950,9 @@ export default function AppsPage() {
             </h3>
             <Select
               value={selectedCategory}
-              onValueChange={(value) => setSelectedCategory(value as AppCategory)}
+              onValueChange={(value) => handleCategoryChange(value as AppCategory)}
             >
-              <SelectTrigger className="w-[140px] h-8 text-xs">
+              <SelectTrigger className="w-35 h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -757,7 +970,7 @@ export default function AppsPage() {
 
           {filteredApps.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground text-sm border border-dashed rounded-lg">
-              No apps in this category yet.
+              There are no other apps in this category.
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
@@ -781,12 +994,97 @@ export default function AppsPage() {
         }}
       >
         <SheetContent className="sm:max-w-lg overflow-y-auto">
+          {selectedAppId && TOKEN_APP_CONFIGS[selectedAppId] && (() => {
+            const config = TOKEN_APP_CONFIGS[selectedAppId];
+            const state = getTokenAppState(selectedAppId);
+            return (
+              <>
+                <SheetHeader>
+                  <SheetTitle className="mr-auto">
+                    {config.label}
+                  </SheetTitle>
+                  {state.isConnected && state.savedToken && (
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => updateTokenAppState(selectedAppId, { showDisconnect: true })}
+                    >
+                      Disconnect
+                    </Button>
+                  )}
+                  <SheetDescription className="sr-only">
+                    {config.label} integration settings
+                  </SheetDescription>
+                </SheetHeader>
+
+                {state.isLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Spinner />
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-8">
+                    <div className="space-y-4">
+                      <FieldDescription className="flex flex-col gap-2">
+                        <span>{config.description}</span>
+                        <span>
+                          Get your key from the{' '}
+                          <a
+                            href={config.dashboardUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground underline"
+                          >
+                            {config.dashboardLabel}
+                          </a>.
+                        </span>
+                      </FieldDescription>
+
+                      <Field>
+                        <FieldLabel htmlFor={`${selectedAppId}-token`}>API Key</FieldLabel>
+                        <Input
+                          id={`${selectedAppId}-token`}
+                          type="password"
+                          placeholder={
+                            !state.savedToken && getSettingByKey(config.settingKey)
+                              ? 'The default API key is already provided by this server.'
+                              : config.placeholder
+                          }
+                          value={state.token}
+                          onChange={(e) => updateTokenAppState(selectedAppId, { token: e.target.value })}
+                          className="font-mono text-xs"
+                        />
+                        <div className="flex gap-2 mt-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSaveTokenApp(selectedAppId)}
+                            disabled={!state.token.trim() || state.token === state.savedToken || state.isSaving}
+                          >
+                            {state.isSaving ? 'Saving...' : 'Save'}
+                          </Button>
+                        </div>
+                      </Field>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
           {selectedAppId === 'mailerlite' && (
             <>
               <SheetHeader>
                 <SheetTitle className="mr-auto">
                   MailerLite
                 </SheetTitle>
+                {isConnected && (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => setShowDisconnectDialog(true)}
+                  >
+                    Disconnect
+                  </Button>
+                )}
                 <SheetDescription className="sr-only">
                   MailerLite integration settings
                 </SheetDescription>
@@ -797,22 +1095,10 @@ export default function AppsPage() {
                   <Spinner />
                 </div>
               ) : (
-                <div className="mt-6 space-y-8">
+                <div className="mt-3 space-y-8">
 
                   {/* API Key Section */}
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <FieldLegend>API Key</FieldLegend>
-                      {isConnected && (
-                        <Button
-                          variant="secondary"
-                          size="xs"
-                          onClick={() => setShowDisconnectDialog(true)}
-                        >
-                          Disconnect
-                        </Button>
-                      )}
-                    </div>
                     <FieldDescription>
                       Enter your MailerLite API key. Find it in{' '}
                       <span className="text-foreground">MailerLite &rarr; Integrations &rarr; API</span>.
@@ -1017,6 +1303,27 @@ export default function AppsPage() {
         onConfirm={handleDisconnect}
         onCancel={() => setShowDisconnectDialog(false)}
       />
+
+      {/* Token App Disconnect Confirmation Dialogs */}
+      {Object.entries(TOKEN_APP_CONFIGS).map(([appId, config]) => {
+        const state = getTokenAppState(appId);
+        return (
+          <ConfirmDialog
+            key={appId}
+            open={state.showDisconnect}
+            onOpenChange={(open: boolean) =>
+              updateTokenAppState(appId, { showDisconnect: open })
+            }
+            title={`Disconnect ${config.label}?`}
+            description={config.disconnectMessage}
+            confirmLabel="Disconnect"
+            cancelLabel="Cancel"
+            confirmVariant="destructive"
+            onConfirm={() => handleDisconnectTokenApp(appId)}
+            onCancel={() => updateTokenAppState(appId, { showDisconnect: false })}
+          />
+        );
+      })}
 
       {/* Delete Connection Confirmation Dialog */}
       <ConfirmDialog
