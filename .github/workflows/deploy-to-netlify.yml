@@ -1,0 +1,43 @@
+# Your Netlify site **masjidweb-multi** is already connected to this GitHub repo
+# on branch **single-site**. Netlify builds and deploys on every push — no tokens
+# or secrets are required in GitHub for that.
+#
+# - On push: Netlify builds from Git (no secret needed).
+# - On “Run workflow” (manual): optionally POSTs NETLIFY_BUILD_HOOK_URL to start
+#   an extra Netlify build (uses the repo secret you added).
+
+name: Netlify deploy (via Netlify Git integration)
+
+on:
+  push:
+    branches: [single-site, tenant-multi]
+  workflow_dispatch:
+
+concurrency:
+  group: netlify-deploy-notice
+  cancel-in-progress: true
+
+jobs:
+  netlify-builds-this-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm Netlify handles production deploys
+        run: |
+          echo "::notice::Pushes to this branch trigger Netlify automatically (repo + branch linked in Netlify). Check the Netlify dashboard for build logs."
+          echo "OK — no GitHub secret required for deploy."
+
+  # Manual only: uses repository secret NETLIFY_BUILD_HOOK_URL (optional extra trigger)
+  trigger-build-hook:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST Netlify build hook
+        env:
+          NETLIFY_BUILD_HOOK_URL: ${{ secrets.NETLIFY_BUILD_HOOK_URL }}
+        run: |
+          if [ -z "${NETLIFY_BUILD_HOOK_URL:-}" ]; then
+            echo "::notice::NETLIFY_BUILD_HOOK_URL is not set — nothing to POST."
+            exit 0
+          fi
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' "$NETLIFY_BUILD_HOOK_URL"
+          echo "::notice::Netlify build hook accepted (check deploys on Netlify)."

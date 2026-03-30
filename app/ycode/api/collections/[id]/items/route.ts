@@ -217,13 +217,16 @@ export async function POST(
       valuesWithAutoFields[updatedAtField.id] = now;
     }
 
-    const _envTenantId = process.env.TENANT_ID;
-    const _envTenantSlug = process.env.TENANT_SLUG;
-    if (_envTenantId) {
+    // Prefer middleware headers; fall back to env (single-tenant / template builds)
+    const _tenantId =
+      request.headers.get('x-tenant-id') || process.env.TENANT_ID || null;
+    const _tenantSlug =
+      request.headers.get('x-tenant-slug') || process.env.TENANT_SLUG || null;
+    if (_tenantId) {
       const tidField = fields.find(f => f.key === 'tenant_id');
       const tslugField = fields.find(f => f.key === 'tenant_slug');
-      if (tidField) valuesWithAutoFields[tidField.id] = _envTenantId;
-      if (tslugField && _envTenantSlug) valuesWithAutoFields[tslugField.id] = _envTenantSlug;
+      if (tidField) valuesWithAutoFields[tidField.id] = _tenantId;
+      if (tslugField && _tenantSlug) valuesWithAutoFields[tslugField.id] = _tenantSlug;
     }
 
     if (valuesWithAutoFields && typeof valuesWithAutoFields === 'object') {

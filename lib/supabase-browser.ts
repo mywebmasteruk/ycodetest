@@ -11,6 +11,7 @@
 
 import { createBrowserClient as createSupabaseBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseCookieOptionsForHost } from '@/lib/supabase-cookie-domain';
 
 let browserClient: SupabaseClient | null = null;
 let configPromise: Promise<{ url: string; anonKey: string } | null> | null = null;
@@ -59,7 +60,15 @@ async function getOrCreateClient(): Promise<SupabaseClient | null> {
   const config = await getSupabaseConfig();
   if (!config) return null;
 
-  browserClient = createSupabaseBrowserClient(config.url, config.anonKey);
+  const suffix = process.env.NEXT_PUBLIC_TENANT_DOMAIN_SUFFIX?.trim();
+  const cookieOpts =
+    typeof window !== 'undefined'
+      ? supabaseCookieOptionsForHost(window.location.hostname, suffix)
+      : undefined;
+
+  browserClient = createSupabaseBrowserClient(config.url, config.anonKey, {
+    ...(cookieOpts ? { cookieOptions: cookieOpts } : {}),
+  });
   return browserClient;
 }
 

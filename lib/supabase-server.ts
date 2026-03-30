@@ -1,6 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
+import { headers, cookies } from 'next/headers';
 import { credentials } from './credentials';
 import { parseSupabaseConfig } from './supabase-config-parser';
+import { supabaseCookieOptionsForHost } from './supabase-cookie-domain';
 import type { SupabaseConfig, SupabaseCredentials } from '@/types';
 
 /**
@@ -35,13 +38,61 @@ async function getSupabaseCredentials(): Promise<SupabaseCredentials | null> {
  */
 export const getSupabaseConfig = getSupabaseCredentials;
 
-let cachedClient: SupabaseClient | null = null;
-let cachedCredentials: string | null = null;
+let cachedServiceClient: SupabaseClient | null = null;
+let cachedServiceCredentials: string | null = null;
 
 /**
- * Get Supabase client with service role key (admin access)
+ * Build a per-request Supabase client that carries the user's session.
+ * PostgREST sees this as the `authenticated` role so RLS policies apply.
+ */
+async function getAuthenticatedClient(): Promise<SupabaseClient | null> {
+  const creds = await getSupabaseCredentials();
+  if (!creds) return null;
+
+  const cookieStore = await cookies();
+  const host = (await headers()).get('host') || '';
+  const cookieOpts = supabaseCookieOptionsForHost(
+    host,
+    process.env.TENANT_DOMAIN_SUFFIX || process.env.NEXT_PUBLIC_TENANT_DOMAIN_SUFFIX,
+  );
+
+  return createServerClient(creds.projectUrl, creds.anonKey, {
+    cookies: {
+      getAll() { return cookieStore.getAll(); },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          try { cookieStore.set(name, value, options); } catch { /* read-only context */ }
+        });
+      },
+    },
+    ...(cookieOpts ? { cookieOptions: cookieOpts } : {}),
+  });
+}
+
+/**
+ * Get Supabase client for data access.
+ *
+ * When a user has a Supabase session (editor logged in), returns the anon-key
+ * server client with cookies so PostgREST uses `authenticated` and RLS applies
+ * (JWT includes user_metadata.tenant_id).
+ *
+ * Do not rely on `x-tenant-id` alone: middleware-set headers are not always
+ * visible to Route Handlers in Next.js; that previously forced service role and
+ * bypassed RLS.
+ *
+ * Service role is used only when there is no session (setup wizard, migrations).
  */
 export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClient | null> {
+  const authClient = await getAuthenticatedClient();
+  if (authClient) {
+    const {
+      data: { user },
+    } = await authClient.auth.getUser();
+    if (user) {
+      return authClient;
+    }
+  }
+
   const creds = await getSupabaseCredentials();
 
   if (!creds) {
@@ -49,23 +100,42 @@ export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClien
     return null;
   }
 
-  // Cache client if credentials haven't changed
   const credKey = `${creds.projectUrl}:${creds.serviceRoleKey}`;
-  if (cachedClient && cachedCredentials === credKey) {
-    return cachedClient;
+  if (cachedServiceClient && cachedServiceCredentials === credKey) {
+    return cachedServiceClient;
   }
 
-  // Create new client
-  cachedClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
+  cachedServiceClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
 
-  cachedCredentials = credKey;
+  cachedServiceCredentials = credKey;
 
-  return cachedClient;
+  return cachedServiceClient;
+}
+
+/**
+ * Get Supabase client with service role key (always bypasses RLS).
+ * Use only for operations that genuinely need admin access (publishing, setup, migrations).
+ */
+export async function getSupabaseServiceRole(): Promise<SupabaseClient | null> {
+  const creds = await getSupabaseCredentials();
+  if (!creds) return null;
+
+  const credKey = `${creds.projectUrl}:${creds.serviceRoleKey}`;
+  if (cachedServiceClient && cachedServiceCredentials === credKey) {
+    return cachedServiceClient;
+  }
+
+  cachedServiceClient = createClient(creds.projectUrl, creds.serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  cachedServiceCredentials = credKey;
+
+  return cachedServiceClient;
 }
 
 /**
@@ -104,21 +174,73 @@ export async function testSupabaseConnection(
   }
 }
 
+async function getTenantIdFromSession(): Promise<string | null> {
+  const client = await getAuthenticatedClient();
+  if (!client) return null;
+  const {
+    data: { user },
+  } = await client.auth.getUser();
+  const tid = user?.user_metadata?.tenant_id;
+  return typeof tid === 'string' && tid.length > 0 ? tid : null;
+}
+
 /**
- * Get tenant ID from request headers.
- *
- * Opensource: always returns null (single-tenant, no tenant scoping needed).
- * Cloud overlay: overridden to read x-tenant-id header set by middleware.
+ * Tenant id for Knex filters: middleware `x-tenant-id` when present, else
+ * `user_metadata.tenant_id` from the Supabase session (same source as RLS JWT).
  */
 export async function getTenantIdFromHeaders(): Promise<string | null> {
-  return process.env.TENANT_ID || null;
+  try {
+    const h = await headers();
+    const fromHeader = h.get('x-tenant-id');
+    if (fromHeader) return fromHeader;
+  } catch {
+    // ignore
+  }
+  try {
+    const fromSession = await getTenantIdFromSession();
+    if (fromSession) return fromSession;
+  } catch {
+    // ignore
+  }
+  const fromEnv = process.env.TENANT_ID?.trim();
+  return fromEnv || null;
+}
+
+/**
+ * Tenant row scope for SSR: explicit arg, middleware `x-tenant-id`, then env fallbacks
+ * (single-tenant / template builds without a subdomain).
+ */
+export async function resolveTenantScope(explicitTenantId?: string | null): Promise<string | null> {
+  if (explicitTenantId) return explicitTenantId;
+  const fromHeader = await getTenantIdFromHeaders();
+  if (fromHeader) return fromHeader;
+  const fromEnv =
+    process.env.TENANT_ID?.trim() ||
+    process.env.NEXT_PUBLIC_TENANT_ID?.trim() ||
+    process.env.TEMPLATE_TENANT_ID?.trim();
+  return fromEnv || null;
+}
+
+/**
+ * Defense-in-depth: when tenant context exists, narrow PostgREST queries to `tenant_id`.
+ * Use on tables that have a `tenant_id` column so listings stay correct even if the
+ * client falls back to the service role (RLS bypass).
+ *
+ * No-op in single-tenant / pre-login contexts where no tenant id is available.
+ *
+ * Typed as `any` so Supabase PostgrestFilterBuilder chains keep inferring correctly.
+ */
+
+export function scopeToTenantRow(query: any, tenantId: string | null): any {
+  if (!tenantId) return query;
+  return query.eq('tenant_id', tenantId);
 }
 
 /**
  * Execute raw SQL query
  */
 export async function executeSql(sql: string): Promise<{ success: boolean; error?: string }> {
-  const client = await getSupabaseAdmin();
+  const client = await getSupabaseServiceRole();
 
   if (!client) {
     return { success: false, error: 'Supabase not configured' };

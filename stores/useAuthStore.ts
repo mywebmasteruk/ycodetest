@@ -53,6 +53,34 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return;
       }
 
+      // Magic link / recovery emails redirect with tokens in the URL hash. If we do not
+      // call setSession here, the user stays logged out on /ycode (accept-invite handles
+      // type=invite itself and must keep the hash until the password form runs).
+      if (typeof window !== 'undefined' && window.location.hash.length > 1) {
+        const hashParams = new URLSearchParams(
+          window.location.hash.substring(1),
+        );
+        const type = hashParams.get('type');
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        const onAcceptInvite =
+          window.location.pathname === '/ycode/accept-invite' && type === 'invite';
+
+        if (!onAcceptInvite && accessToken && refreshToken) {
+          const { error: hashErr } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (!hashErr) {
+            window.history.replaceState(
+              null,
+              '',
+              window.location.pathname + window.location.search,
+            );
+          }
+        }
+      }
+
       // Validate session server-side (getUser verifies the JWT, unlike getSession)
       const { data: { user } } = await supabase.auth.getUser();
       const { data: { session } } = await supabase.auth.getSession();

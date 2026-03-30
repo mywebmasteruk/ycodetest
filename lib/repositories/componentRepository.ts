@@ -6,7 +6,7 @@
  * Supports draft/published workflow with content hash-based change detection
  */
 
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin, getTenantIdFromHeaders, scopeToTenantRow } from '@/lib/supabase-server';
 import type { Component, Layer } from '@/types';
 import { generateComponentContentHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
@@ -25,17 +25,21 @@ export interface CreateComponentData {
  * Get all components (draft by default, excludes soft deleted)
  */
 export async function getAllComponents(isPublished: boolean = false): Promise<Component[]> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const { data, error } = await client
+  let compQuery = client
     .from('components')
     .select('*')
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+    .is('deleted_at', null);
+
+  compQuery = scopeToTenantRow(compQuery, tid);
+
+  const { data, error } = await compQuery.order('created_at', { ascending: false });
 
   if (error) {
     throw new Error(`Failed to fetch components: ${error.message}`);
@@ -49,18 +53,22 @@ export async function getAllComponents(isPublished: boolean = false): Promise<Co
  * With composite primary key, we need to specify is_published to get a single row
  */
 export async function getComponentById(id: string, isPublished: boolean = false): Promise<Component | null> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const { data, error } = await client
+  let oneComp = client
     .from('components')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  oneComp = scopeToTenantRow(oneComp, tid);
+
+  const { data, error } = await oneComp.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -80,6 +88,7 @@ export async function getComponentsByIds(
   ids: string[],
   isPublished: boolean = false
 ): Promise<Record<string, Component>> {
+  const tid = await getTenantIdFromHeaders();
   const client = await getSupabaseAdmin();
   if (!client) {
     throw new Error('Failed to initialize Supabase client');
@@ -89,12 +98,16 @@ export async function getComponentsByIds(
     return {};
   }
 
-  const { data, error } = await client
+  let byIdsQ = client
     .from('components')
     .select('*')
     .in('id', ids)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
+
+  byIdsQ = scopeToTenantRow(byIdsQ, tid);
+
+  const { data, error } = await byIdsQ;
 
   if (error) {
     throw new Error(`Failed to fetch components: ${error.message}`);

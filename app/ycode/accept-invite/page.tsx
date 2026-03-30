@@ -53,6 +53,69 @@ export default function AcceptInvitePage() {
           return;
         }
 
+        const searchParams = new URLSearchParams(window.location.search);
+        const pkceCode = searchParams.get('code');
+
+        // #region agent log
+        fetch('http://127.0.0.1:7316/ingest/18b4f045-0464-47b6-9592-b5de081cf694', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '199377' },
+          body: JSON.stringify({
+            sessionId: '199377',
+            location: 'accept-invite/page.tsx:verifyInvite',
+            message: 'invite verify start',
+            data: {
+              hostname: window.location.hostname,
+              hasPkceCode: Boolean(pkceCode),
+              hashLen: window.location.hash.length,
+              hasPublicSuffix: Boolean(process.env.NEXT_PUBLIC_TENANT_DOMAIN_SUFFIX),
+            },
+            timestamp: Date.now(),
+            hypothesisId: 'H2-H3',
+          }),
+        }).catch(() => {});
+        // #endregion
+
+        // PKCE: Supabase may redirect with ?code= instead of hash tokens
+        if (pkceCode) {
+          const { data: pkceData, error: exchangeErr } =
+            await supabase.auth.exchangeCodeForSession(pkceCode);
+
+          // #region agent log
+          fetch('http://127.0.0.1:7316/ingest/18b4f045-0464-47b6-9592-b5de081cf694', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '199377' },
+            body: JSON.stringify({
+              sessionId: '199377',
+              location: 'accept-invite/page.tsx:pkce',
+              message: 'exchangeCodeForSession',
+              data: { ok: !exchangeErr, errCode: exchangeErr?.code ?? null },
+              timestamp: Date.now(),
+              hypothesisId: 'H1',
+            }),
+          }).catch(() => {});
+          // #endregion
+
+          if (exchangeErr) {
+            console.error('PKCE exchange error:', exchangeErr);
+            setError('Invalid or expired invitation link. Please request a new invite.');
+            setVerifying(false);
+            return;
+          }
+
+          const email =
+            pkceData.user?.email ?? pkceData.session?.user?.email ?? null;
+          if (email) setUserEmail(email);
+
+          window.history.replaceState(
+            null,
+            '',
+            `${window.location.pathname}${window.location.hash}`,
+          );
+          setVerifying(false);
+          return;
+        }
+
         // Get hash parameters from URL (Supabase sends token in hash)
         const hashParams = new URLSearchParams(window.location.hash.substring(1));
         const accessToken = hashParams.get('access_token');
@@ -69,10 +132,39 @@ export default function AcceptInvitePage() {
 
           if (sessionError) {
             console.error('Session error:', sessionError);
+            // #region agent log
+            fetch('http://127.0.0.1:7316/ingest/18b4f045-0464-47b6-9592-b5de081cf694', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '199377' },
+              body: JSON.stringify({
+                sessionId: '199377',
+                location: 'accept-invite/page.tsx:hash',
+                message: 'setSession invite',
+                data: { ok: false, errCode: sessionError.code ?? null },
+                timestamp: Date.now(),
+                hypothesisId: 'H4',
+              }),
+            }).catch(() => {});
+            // #endregion
             setError('Invalid or expired invitation link. Please request a new invite.');
             setVerifying(false);
             return;
           }
+
+          // #region agent log
+          fetch('http://127.0.0.1:7316/ingest/18b4f045-0464-47b6-9592-b5de081cf694', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '199377' },
+            body: JSON.stringify({
+              sessionId: '199377',
+              location: 'accept-invite/page.tsx:hash',
+              message: 'setSession invite',
+              data: { ok: true },
+              timestamp: Date.now(),
+              hypothesisId: 'H4',
+            }),
+          }).catch(() => {});
+          // #endregion
 
           if (data.user) {
             setUserEmail(data.user.email || null);
@@ -81,6 +173,21 @@ export default function AcceptInvitePage() {
           setVerifying(false);
           return;
         }
+
+        // #region agent log
+        fetch('http://127.0.0.1:7316/ingest/18b4f045-0464-47b6-9592-b5de081cf694', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '199377' },
+          body: JSON.stringify({
+            sessionId: '199377',
+            location: 'accept-invite/page.tsx:no-invite-hash',
+            message: 'no invite hash branch',
+            data: { type: type ?? null, hasAccess: Boolean(accessToken) },
+            timestamp: Date.now(),
+            hypothesisId: 'H5',
+          }),
+        }).catch(() => {});
+        // #endregion
 
         // Check if user is already logged in (maybe clicked link while logged in)
         const { data: { session } } = await supabase.auth.getSession();

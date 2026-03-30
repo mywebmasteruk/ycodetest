@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { resolveInviteRedirectUrl } from '@/lib/auth-invite-redirect';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { noCache } from '@/lib/api-response';
 
@@ -37,9 +38,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const redirect = resolveInviteRedirectUrl(request, redirectTo);
+
     // Use Supabase's built-in invite functionality
     const { data, error } = await client.auth.admin.inviteUserByEmail(email, {
-      redirectTo: redirectTo || undefined,
+      redirectTo: redirect,
       data: {
         invited_at: new Date().toISOString(),
       },

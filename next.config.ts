@@ -54,6 +54,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Root HTML: never cache at shared caches — homepage layers change in Supabase without redeploy.
+        source: '/',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'private, no-cache, no-store, max-age=0, must-revalidate',
+          },
+        ],
+      },
+      {
         // Apply to public pages ONLY (exclude /ycode/*, /_next/*, /a/*)
         source: '/:path((?!ycode|_next|a/).*)*',
         headers: [
