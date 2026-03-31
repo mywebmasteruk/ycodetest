@@ -6,6 +6,7 @@ import { publishLocalisation } from '@/lib/services/localisationService';
 import { publishFolders } from '@/lib/services/folderService';
 import { publishCSS, savePublishedAt } from '@/lib/services/settingsService';
 import { clearAllCache } from '@/lib/services/cacheService';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import { getAllDraftPages, hardDeleteSoftDeletedPages } from '@/lib/repositories/pageRepository';
 import { publishComponents, getUnpublishedComponents, hardDeleteSoftDeletedComponents } from '@/lib/repositories/componentRepository';
@@ -418,11 +419,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Clear cache (not tracked in stats - infrastructure operation)
+    let cachePurgeResult: Record<string, unknown> = {};
     try {
-      await clearAllCache();
-    } catch {
-      // Silently handle - non-fatal
+      const publisherTenantId = await resolveEffectiveTenantId();
+      cachePurgeResult = await clearAllCache(publisherTenantId);
+    } catch (cacheErr) {
+      cachePurgeResult = { error: String(cacheErr) };
+      console.error('[publish] clearAllCache failed:', cacheErr);
     }
+    (result as unknown as Record<string, unknown>).cachePurge = cachePurgeResult;
 
     // Save published timestamp to settings (must match DB unique constraint — see settingsRepository + TENANT_ID)
     try {

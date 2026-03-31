@@ -34,6 +34,11 @@ export async function generateStaticParams() {
     }
 
     const tenantId = settingsTenantIdOrNull();
+    // Multi-tenant: without a build-time tenant id, do not enumerate paths — avoids mixing
+    // all tenants' URLs into one build. Runtime still serves every path via dynamicParams.
+    if (!tenantId) {
+      return [];
+    }
 
     let pagesQuery = supabase
       .from('pages')
@@ -58,13 +63,17 @@ export async function generateStaticParams() {
     localesQuery = applyTenantEq(localesQuery, tenantId);
     const { data: locales } = await localesQuery;
 
-    let translationsQuery = supabase
-      .from('translations')
-      .select('*')
-      .eq('is_published', true)
-      .is('deleted_at', null);
-    translationsQuery = applyTenantEq(translationsQuery, tenantId);
-    const { data: translations } = await translationsQuery;
+    // translations has no tenant_id; scope to this tenant's locales only.
+    const localeIds = (locales ?? []).map((l) => l.id);
+    const { data: translations } =
+      localeIds.length > 0
+        ? await supabase
+          .from('translations')
+          .select('*')
+          .eq('is_published', true)
+          .is('deleted_at', null)
+          .in('locale_id', localeIds)
+        : { data: null };
 
     if (!pages || !folders) {
       return [];

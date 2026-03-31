@@ -97,16 +97,25 @@ export async function invalidatePages(routePaths: string[]): Promise<boolean> {
 
 /**
  * Clear all cache after publish.
+ * @param publisherTenantId - optional; included in return payload for debugging (subdomain tenant).
  * Returns diagnostic info about the Netlify edge purge for debugging.
  */
-export async function clearAllCache(): Promise<Record<string, unknown>> {
+export async function clearAllCache(
+  publisherTenantId?: string | null,
+): Promise<Record<string, unknown>> {
   try {
     revalidateTag('all-pages', { expire: 0 });
+    revalidateTag('route-/', { expire: 0 });
     revalidatePath('/', 'layout');
+    revalidatePath('/', 'page');
   } catch (error) {
     console.error('❌ [Cache] Clear all error:', error);
     throw new Error('Failed to clear all cache');
   }
 
-  return await purgeNetlifyEdgeCache();
+  const purge = await purgeNetlifyEdgeCache();
+  return {
+    ...purge,
+    publisherTenantId: publisherTenantId ?? null,
+  };
 }
