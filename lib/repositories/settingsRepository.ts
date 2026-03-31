@@ -4,7 +4,7 @@
  * Data access layer for application settings stored in the database
  */
 
-import { settingsTenantIdOrNull } from '@/lib/masjidweb/settings-tenant-id';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import type { Setting } from '@/types';
 
@@ -20,7 +20,7 @@ export async function getAllSettings(): Promise<Setting[]> {
   }
 
   let listQuery = client.from('settings').select('*').order('key', { ascending: true });
-  const listTid = settingsTenantIdOrNull();
+  const listTid = await resolveEffectiveTenantId();
   if (listTid) {
     listQuery = listQuery.eq('tenant_id', listTid);
   }
@@ -47,7 +47,7 @@ export async function getSettingByKey(key: string): Promise<any | null> {
   }
 
   let oneQuery = client.from('settings').select('value').eq('key', key);
-  const oneTid = settingsTenantIdOrNull();
+  const oneTid = await resolveEffectiveTenantId();
   if (oneTid) {
     oneQuery = oneQuery.eq('tenant_id', oneTid);
   }
@@ -78,7 +78,7 @@ export async function getSettingsByKeys(keys: string[]): Promise<Record<string, 
   }
 
   let keysQuery = client.from('settings').select('key, value').in('key', keys);
-  const keysTid = settingsTenantIdOrNull();
+  const keysTid = await resolveEffectiveTenantId();
   if (keysTid) {
     keysQuery = keysQuery.eq('tenant_id', keysTid);
   }
@@ -110,7 +110,7 @@ export async function setSetting(key: string, value: any): Promise<Setting> {
     throw new Error('Failed to initialize Supabase client');
   }
 
-  const tenantId = settingsTenantIdOrNull();
+  const tenantId = await resolveEffectiveTenantId();
   const row: Record<string, unknown> = {
     key,
     value,
@@ -153,6 +153,8 @@ export async function setSettings(settings: Record<string, any>): Promise<number
     throw new Error('Failed to initialize Supabase client');
   }
 
+  const batchTenantId = await resolveEffectiveTenantId();
+
   // Separate entries: null/undefined values should be deleted, others upserted
   const toUpsert: [string, any][] = [];
   const toDelete: string[] = [];
@@ -168,9 +170,8 @@ export async function setSettings(settings: Record<string, any>): Promise<number
   // Delete settings with null values
   if (toDelete.length > 0) {
     let delQuery = client.from('settings').delete().in('key', toDelete);
-    const delTid = settingsTenantIdOrNull();
-    if (delTid) {
-      delQuery = delQuery.eq('tenant_id', delTid);
+    if (batchTenantId) {
+      delQuery = delQuery.eq('tenant_id', batchTenantId);
     }
 
     const { error: deleteError } = await delQuery;
@@ -183,18 +184,17 @@ export async function setSettings(settings: Record<string, any>): Promise<number
   // Upsert settings with non-null values
   if (toUpsert.length > 0) {
     const now = new Date().toISOString();
-    const tenantId = settingsTenantIdOrNull();
     const records = toUpsert.map(([key, value]) => ({
       key,
       value,
       updated_at: now,
-      ...(tenantId ? { tenant_id: tenantId } : {}),
+      ...(batchTenantId ? { tenant_id: batchTenantId } : {}),
     }));
 
     const { error } = await client
       .from('settings')
       .upsert(records, {
-        onConflict: tenantId ? 'tenant_id,key' : 'key',
+        onConflict: batchTenantId ? 'tenant_id,key' : 'key',
       });
 
     if (error) {

@@ -1,6 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { headers } from 'next/headers';
-import { settingsTenantIdOrNull } from '@/lib/masjidweb/settings-tenant-id';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { credentials } from './credentials';
 import { parseSupabaseConfig } from './supabase-config-parser';
 import type { SupabaseConfig, SupabaseCredentials } from '@/types';
@@ -107,15 +106,10 @@ export async function testSupabaseConnection(
 }
 
 /**
- * Tenant id for the current request: `x-tenant-id` set by proxy (subdomain / JWT /
- * provisioning), then env fallback (`TENANT_ID` / `MASTER_TENANT_ID` / `TEMPLATE_TENANT_ID`)
- * when the header is absent.
+ * Delegates to `resolveEffectiveTenantId` — kept as the name Knex helpers use.
  */
 export async function getTenantIdFromHeaders(): Promise<string | null> {
-  const h = await headers();
-  const fromHeader = h.get('x-tenant-id')?.trim();
-  if (fromHeader) return fromHeader;
-  return settingsTenantIdOrNull();
+  return resolveEffectiveTenantId();
 }
 
 /**
