@@ -611,7 +611,6 @@ export async function POST(
       collectionItemSlugs,
       locale,
       translations,
-      undefined,
       collectionLayerClasses,
       collectionLayerTag,
     );

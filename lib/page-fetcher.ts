@@ -107,10 +107,9 @@ function matchDynamicPagePattern(urlPath: string, patternPath: string): string |
 export async function loadTranslationsForLocale(
   localeCode: string,
   isPublished: boolean,
-  tenantId?: string
 ): Promise<{ locale: Locale | null; translations: Record<string, Translation> }> {
   try {
-    const supabase = await getSupabaseAdmin(tenantId);
+    const supabase = await getSupabaseAdmin();
 
     if (!supabase) {
       return { locale: null, translations: {} };
@@ -173,10 +172,9 @@ async function getCollectionItemBySlug(
   collectionFields?: CollectionField[],
   locale?: Locale | null,
   translations?: Record<string, Translation>,
-  tenantId?: string
 ): Promise<CollectionItemWithValues | null> {
   try {
-    const supabase = await getSupabaseAdmin(tenantId);
+    const supabase = await getSupabaseAdmin();
 
     if (!supabase) {
       return null;
@@ -268,10 +266,9 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
   slugPath: string,
   isPublished: boolean,
   paginationContext?: PaginationContext,
-  tenantId?: string
 ): Promise<PageData | null> {
   try {
-    const supabase = await getSupabaseAdmin(tenantId);
+    const supabase = await getSupabaseAdmin();
 
     if (!supabase) {
       console.error('Supabase not configured');
@@ -299,7 +296,6 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
       const { locale, translations: trans } = await loadTranslationsForLocale(
         localeDetection.localeCode,
         isPublished,
-        tenantId
       );
       detectedLocale = locale;
       translations = trans;
@@ -406,7 +402,6 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
               collectionFields,
               detectedLocale,
               translations,
-              tenantId
             );
 
             if (!collectionItem) {
@@ -569,10 +564,9 @@ export const fetchPageByPath = cache(async function fetchPageByPath(
 export async function fetchErrorPage(
   errorCode: number,
   isPublished: boolean,
-  tenantId?: string
 ): Promise<PageData | null> {
   try {
-    const supabase = await getSupabaseAdmin(tenantId);
+    const supabase = await getSupabaseAdmin();
 
     if (!supabase) {
       console.error('Supabase not configured');
@@ -661,10 +655,9 @@ export const fetchHomepage = cache(async function fetchHomepage(
   isPublished: boolean,
   paginationContext?: PaginationContext,
   preloadedComponents?: Component[],
-  tenantId?: string
 ): Promise<Pick<PageData, 'page' | 'pageLayers' | 'components' | 'locale' | 'availableLocales' | 'translations'> | null> {
   try {
-    const supabase = await getSupabaseAdmin(tenantId);
+    const supabase = await getSupabaseAdmin();
 
     if (!supabase) {
       return null;
@@ -2562,7 +2555,6 @@ export async function renderCollectionItemsToHtml(
   collectionItemSlugs?: Record<string, string>,
   locale?: Locale | null,
   translations?: Record<string, Translation>,
-  tenantId?: string,
   collectionLayerClasses?: string[],
   collectionLayerTag?: string,
 ): Promise<string> {

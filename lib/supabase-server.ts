@@ -40,9 +40,10 @@ let cachedClient: SupabaseClient | null = null;
 let cachedCredentials: string | null = null;
 
 /**
- * Get Supabase client with service role key (admin access)
+ * Get Supabase client with service role key (admin access).
+ * Tenant scoping is done in queries (e.g. `resolveEffectiveTenantId`), not on the client.
  */
-export async function getSupabaseAdmin(tenantId?: string): Promise<SupabaseClient | null> {
+export async function getSupabaseAdmin(): Promise<SupabaseClient | null> {
   const creds = await getSupabaseCredentials();
 
   if (!creds) {

@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { headers } from 'next/headers';
 import { settingsTenantIdOrNull } from '@/lib/masjidweb/settings-tenant-id';
 
@@ -7,11 +8,13 @@ import { settingsTenantIdOrNull } from '@/lib/masjidweb/settings-tenant-id';
  * 1. `x-tenant-id` from the proxy (subdomain / JWT / provisioning), when a request exists
  * 2. Env fallback: `TENANT_ID`, then `MASTER_TENANT_ID`, then `TEMPLATE_TENANT_ID`
  *
+ * Wrapped in React `cache()` so one request resolves once (consistent reads; fewer `headers()` calls).
+ *
  * Repositories should use this (not env alone) so one deploy serving many subdomains
  * stays aligned with Knex helpers. If `headers()` is unavailable (e.g. scripts), we
  * fall back to env only — same as pre-change settings behavior.
  */
-export async function resolveEffectiveTenantId(): Promise<string | null> {
+async function computeEffectiveTenantId(): Promise<string | null> {
   try {
     const h = await headers();
     const fromHeader = h.get('x-tenant-id')?.trim();
@@ -21,3 +24,5 @@ export async function resolveEffectiveTenantId(): Promise<string | null> {
   }
   return settingsTenantIdOrNull();
 }
+
+export const resolveEffectiveTenantId = cache(computeEffectiveTenantId);
