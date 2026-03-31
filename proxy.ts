@@ -2,66 +2,11 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { supabaseCookieOptionsForRequestHeaders } from '@/lib/supabase-cookie-domain';
-
-/**
- * Public API routes that skip authentication.
- */
-const PUBLIC_API_PREFIXES = [
-  '/ycode/api/setup/',    // Setup wizard — needed before any user exists
-  '/ycode/api/supabase/', // Supabase config — needed for browser client init
-  '/ycode/api/auth/',     // Auth callbacks and session checks
-  '/ycode/api/v1/',       // Public API — has own API key auth
-];
-
-/**
- * Patterns for collection item endpoints that must be accessible on published pages
- * (load-more pagination, filter). Matched via regex since the collection ID is dynamic.
- */
-const PUBLIC_COLLECTION_ITEM_SUFFIXES = ['/items/filter', '/items/load-more'];
-
-const PUBLIC_API_EXACT = [
-  '/ycode/api/revalidate', // Cache revalidation — has own secret token auth
-];
-
-/**
- * Derive the Supabase project URL and anon key from environment variables.
- * Returns null if env vars are not set (pre-setup or local dev without .env.local).
- */
-function getSupabaseEnvConfig(): { url: string; anonKey: string } | null {
-  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY
-    || process.env.SUPABASE_ANON_KEY;
-  const connectionUrl = process.env.SUPABASE_CONNECTION_URL;
-
-  if (!anonKey || !connectionUrl) return null;
-
-  // Extract project ID from connection URL
-  // e.g. "postgresql://postgres.abc123:..." → "abc123"
-  const match = connectionUrl.match(/\/\/postgres\.([a-z0-9]+):/);
-  if (!match) return null;
-
-  return {
-    url: `https://${match[1]}.supabase.co`,
-    anonKey,
-  };
-}
-
-function isPublicApiRoute(pathname: string, method: string): boolean {
-  // POST to form-submissions is public (website visitors submitting forms)
-  if (pathname === '/ycode/api/form-submissions' && method === 'POST') {
-    return true;
-  }
-
-  if (PUBLIC_API_EXACT.includes(pathname)) return true;
-  if (PUBLIC_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
-
-  // Collection item endpoints for published pages (POST only — filter, load-more)
-  if (method === 'POST' && pathname.startsWith('/ycode/api/collections/') &&
-      PUBLIC_COLLECTION_ITEM_SUFFIXES.some(suffix => pathname.endsWith(suffix))) {
-    return true;
-  }
-
-  return false;
-}
+import {
+  getSupabaseEnvConfig,
+  isPublicApiRoute,
+  isPublicPage,
+} from '@/lib/tenant';
 
 /**
  * Verify Supabase session for protected API routes.
@@ -125,14 +70,10 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const isPublicPage = !pathname.startsWith('/ycode')
-    && !pathname.startsWith('/_next')
-    && !pathname.startsWith('/api')
-    && !pathname.startsWith('/dynamic');
   const hasPaginationParams = Array.from(request.nextUrl.searchParams.keys())
     .some((key) => key.startsWith('p_'));
 
-  if (isPublicPage && hasPaginationParams) {
+  if (isPublicPage(pathname) && hasPaginationParams) {
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname = pathname === '/' ? '/dynamic' : `/dynamic${pathname}`;
 
