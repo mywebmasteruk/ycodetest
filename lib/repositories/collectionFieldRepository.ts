@@ -68,7 +68,8 @@ export async function getAllFields(
     }
   }
 
-  return allFields;
+  const SYSTEM_FIELD_KEYS = new Set(['tenant_id', 'tenant_slug']);
+  return allFields.filter((f) => !f.key || !SYSTEM_FIELD_KEYS.has(f.key));
 }
 
 /**
@@ -117,7 +118,12 @@ export async function getFieldsByCollectionId(
     throw new Error(`Failed to fetch collection fields: ${error.message}`);
   }
 
-  return data || [];
+  const SYSTEM_FIELD_KEYS = new Set(['tenant_id', 'tenant_slug']);
+  const fields = (data || []).filter(
+    (f) => !f.key || !SYSTEM_FIELD_KEYS.has(f.key),
+  );
+
+  return fields;
 }
 
 /**

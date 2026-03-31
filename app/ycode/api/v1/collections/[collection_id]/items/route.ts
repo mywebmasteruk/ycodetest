@@ -290,9 +290,12 @@ export async function POST(
     // Now create the published version with the same ID
     const { getSupabaseAdmin } = await import('@/lib/supabase-server');
     const { getValuesByItemId } = await import('@/lib/repositories/collectionItemValueRepository');
+    const { resolveEffectiveTenantId: resolveTid } = await import('@/lib/masjidweb/effective-tenant-id');
     const client = await getSupabaseAdmin();
 
     if (client) {
+      const tenantId = await resolveTid();
+
       // Insert published item with same ID
       await client
         .from('collection_items')
@@ -304,6 +307,7 @@ export async function POST(
           is_publishable: true,
           created_at: item.created_at,
           updated_at: item.updated_at,
+          ...(tenantId ? { tenant_id: tenantId } : {}),
         });
 
       // Copy draft values to published with SAME IDs (matching publishValues pattern)
@@ -312,13 +316,14 @@ export async function POST(
         const now = new Date().toISOString();
         
         const publishedValues = draftValues.map(value => ({
-          id: value.id,  // Same ID as draft
+          id: value.id,
           item_id: value.item_id,
           field_id: value.field_id,
           value: value.value,
           is_published: true,
           created_at: value.created_at,
           updated_at: now,
+          ...(tenantId ? { tenant_id: tenantId } : {}),
         }));
 
         await client

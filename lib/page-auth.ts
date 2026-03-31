@@ -1,6 +1,8 @@
 import type { Page, PageFolder } from '@/types';
 import { createHmac, randomUUID } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
+import { applyTenantEq } from '@/lib/masjidweb/apply-tenant-eq';
 
 /**
  * Page Password Protection Utilities
@@ -190,6 +192,7 @@ export async function fetchFoldersForAuth(isPublished: boolean): Promise<PageFol
   const supabase = await getSupabaseAdmin();
   if (!supabase) return [];
 
+  const tenantId = await resolveEffectiveTenantId();
   let query = supabase
     .from('page_folders')
     .select('*')
@@ -198,6 +201,7 @@ export async function fetchFoldersForAuth(isPublished: boolean): Promise<PageFol
   if (isPublished) {
     query = query.eq('is_published', true);
   }
+  query = applyTenantEq(query, tenantId);
 
   const { data } = await query;
   return (data as PageFolder[]) || [];
