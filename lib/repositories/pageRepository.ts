@@ -4,6 +4,7 @@
  * Data access layer for page operations with Supabase
  */
 
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { reorderSiblings } from '@/lib/repositories/pageFolderRepository';
 import type { Page, PageSettings } from '../../types';
@@ -88,10 +89,16 @@ export async function getAllPages(filters?: QueryFilters): Promise<Page[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('pages')
     .select('*')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Apply filters if provided
   if (filters) {
@@ -122,13 +129,20 @@ export async function getPageById(id: string, isPublished: boolean = false): Pro
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('pages')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -152,11 +166,17 @@ export async function getPageBySlug(slug: string, filters?: QueryFilters): Promi
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('pages')
     .select('*')
     .eq('slug', slug)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Apply additional filters if provided
   if (filters) {
@@ -203,7 +223,8 @@ async function transferIndexPage(
   client: any,
   newIndexPageId: string,
   pageFolderId: string | null,
-  isPublished: boolean = false
+  isPublished: boolean = false,
+  tenantId: string | null = null
 ): Promise<void> {
   // Find existing index page in the same folder WITH THE SAME is_published status
   // This prevents draft pages from being modified when creating published index pages
@@ -214,6 +235,10 @@ async function transferIndexPage(
     .eq('is_published', isPublished)
     .is('deleted_at', null)
     .neq('id', newIndexPageId);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Filter by parent folder
   if (pageFolderId === null || pageFolderId === undefined) {
@@ -237,7 +262,7 @@ async function transferIndexPage(
     // If the existing index page already has a slug (shouldn't happen but might in edge cases),
     // we don't need to generate a new one - just unset is_index
     if (existingIndex.slug && existingIndex.slug.trim() !== '') {
-      const { error: updateError } = await client
+      let upd = client
         .from('pages')
         .update({
           is_index: false,
@@ -245,6 +270,12 @@ async function transferIndexPage(
         })
         .eq('id', existingIndex.id)
         .eq('is_published', isPublished); // Must filter by is_published for composite key
+
+      if (tenantId) {
+        upd = upd.eq('tenant_id', tenantId);
+      }
+
+      const { error: updateError } = await upd;
 
       if (updateError) {
         throw new Error(`Failed to transfer index from existing page: ${updateError.message}`);
@@ -258,28 +289,38 @@ async function transferIndexPage(
     let newSlug = generateSlugFromName(existingIndex.name);
 
     // Check if slug already exists (regardless of published state)
-    const { data: duplicateCheck } = await client
+    let dupQ = client
       .from('pages')
       .select('id')
       .eq('slug', newSlug)
       .is('deleted_at', null)
       .neq('id', existingIndex.id)
-      .limit(1)
-      .single();
+      .limit(1);
+
+    if (tenantId) {
+      dupQ = dupQ.eq('tenant_id', tenantId);
+    }
+
+    const { data: duplicateCheck } = await dupQ.single();
 
     // If slug exists, add timestamp
     if (duplicateCheck) {
       newSlug = generateSlugFromName(existingIndex.name, timestamp);
 
       // Double-check the timestamped slug doesn't exist either
-      const { data: timestampedDuplicateCheck } = await client
+      let tsDupQ = client
         .from('pages')
         .select('id')
         .eq('slug', newSlug)
         .is('deleted_at', null)
         .neq('id', existingIndex.id)
-        .limit(1)
-        .single();
+        .limit(1);
+
+      if (tenantId) {
+        tsDupQ = tsDupQ.eq('tenant_id', tenantId);
+      }
+
+      const { data: timestampedDuplicateCheck } = await tsDupQ.single();
 
       // If still duplicate, add random suffix
       if (timestampedDuplicateCheck) {
@@ -288,7 +329,7 @@ async function transferIndexPage(
     }
 
     // Update the old index page: unset is_index and set slug
-    const { error: updateError } = await client
+    let upd2 = client
       .from('pages')
       .update({
         is_index: false,
@@ -297,6 +338,12 @@ async function transferIndexPage(
       })
       .eq('id', existingIndex.id)
       .eq('is_published', isPublished); // Must filter by is_published for composite key
+
+    if (tenantId) {
+      upd2 = upd2.eq('tenant_id', tenantId);
+    }
+
+    const { error: updateError } = await upd2;
 
     if (updateError) {
       throw new Error(`Failed to transfer index from existing page: ${updateError.message}`);
@@ -317,7 +364,8 @@ async function validateIndexPageConstraints(
   client: any,
   pageData: { is_index?: boolean; slug: string; page_folder_id?: string | null; error_page?: number | null; is_dynamic?: boolean },
   excludePageId?: string,
-  currentPageData?: { is_index: boolean; page_folder_id: string | null; is_dynamic?: boolean }
+  currentPageData?: { is_index: boolean; page_folder_id: string | null; is_dynamic?: boolean },
+  tenantId: string | null = null
 ): Promise<void> {
   // Rule 1: Index pages must have empty slug
   if (pageData.is_index && pageData.slug.trim() !== '') {
@@ -350,6 +398,10 @@ async function validateIndexPageConstraints(
       .is('page_folder_id', null)
       .is('deleted_at', null);
 
+    if (tenantId) {
+      query = query.eq('tenant_id', tenantId);
+    }
+
     // Exclude current page if updating
     if (excludePageId) {
       query = query.neq('id', excludePageId);
@@ -380,6 +432,8 @@ export async function createPage(pageData: CreatePageData, additionalData?: Reco
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   const normalizedPageFolderId = normalizePageFolderId(pageData.page_folder_id);
   const normalizedPageData: CreatePageData = {
     ...pageData,
@@ -397,7 +451,8 @@ export async function createPage(pageData: CreatePageData, additionalData?: Reco
       is_dynamic: normalizedPageData.is_dynamic || false,
     },
     undefined,
-    undefined
+    undefined,
+    tenantId
   );
 
   // Calculate content hash for page metadata
@@ -414,11 +469,15 @@ export async function createPage(pageData: CreatePageData, additionalData?: Reco
   const { content_hash: _, ...pageDataWithoutHash } = normalizedPageData as any;
 
   // Merge page data with any additional fields and our calculated content hash
-  const insertData = {
+  const insertData: Record<string, unknown> = {
     ...(additionalData || {}),
     ...pageDataWithoutHash,
     content_hash: contentHash,
   };
+
+  if (tenantId) {
+    insertData.tenant_id = tenantId;
+  }
 
   const { data, error } = await client
     .from('pages')
@@ -432,7 +491,13 @@ export async function createPage(pageData: CreatePageData, additionalData?: Reco
 
   // If setting as index page, transfer from existing index page
   if (normalizedPageData.is_index) {
-    await transferIndexPage(client, data.id, normalizedPageFolderId, normalizedPageData.is_published || false);
+    await transferIndexPage(
+      client,
+      data.id,
+      normalizedPageFolderId,
+      normalizedPageData.is_published || false,
+      tenantId
+    );
   }
 
   return data;
@@ -447,6 +512,8 @@ export async function updatePage(id: string, updates: UpdatePageData): Promise<P
   if (!client) {
     throw new Error('Supabase not configured');
   }
+
+  const tenantId = await resolveEffectiveTenantId();
 
   // Get current draft page data to merge with updates for validation
   // Repository update functions always update draft versions (users edit drafts)
@@ -478,7 +545,8 @@ export async function updatePage(id: string, updates: UpdatePageData): Promise<P
       client,
       mergedData,
       id,
-      { is_index: currentPage.is_index, page_folder_id: currentPage.page_folder_id }
+      { is_index: currentPage.is_index, page_folder_id: currentPage.page_folder_id },
+      tenantId
     );
   }
 
@@ -491,19 +559,25 @@ export async function updatePage(id: string, updates: UpdatePageData): Promise<P
 
     // FIRST: Clean up any orphaned pages with empty slugs that are NOT index pages
     // This can happen if a previous operation failed mid-way
-    const { data: orphanedPages } = await client
+    let orphanQ = client
       .from('pages')
       .select('id, name, slug, is_index, page_folder_id')
       .eq('slug', '')
       .eq('is_index', false)
       .is('deleted_at', null);
 
+    if (tenantId) {
+      orphanQ = orphanQ.eq('tenant_id', tenantId);
+    }
+
+    const { data: orphanedPages } = await orphanQ;
+
     if (orphanedPages && orphanedPages.length > 0) {
       // Fix all orphaned pages in a single batch operation
       await fixOrphanedPageSlugs(orphanedPages);
     }
 
-    await transferIndexPage(client, id, folderIdForTransfer, currentPage.is_published);
+    await transferIndexPage(client, id, folderIdForTransfer, currentPage.is_published, tenantId);
   }
 
   // Calculate new content hash based on merged data
@@ -527,13 +601,17 @@ export async function updatePage(id: string, updates: UpdatePageData): Promise<P
   };
 
   // Repository update functions always update DRAFT versions (users edit drafts)
-  const { data, error } = await client
+  let updateQ = client
     .from('pages')
     .update(updatesWithHash)
     .eq('id', id)
-    .eq('is_published', false)
-    .select()
-    .single();
+    .eq('is_published', false);
+
+  if (tenantId) {
+    updateQ = updateQ.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await updateQ.select().single();
 
   if (error) {
     throw new Error(`Failed to update page: ${error.message}`);
@@ -553,15 +631,23 @@ export async function batchUpdatePageOrder(updates: Array<{ id: string; order: n
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Update each page's order (drafts only - users edit drafts)
-  const promises = updates.map(({ id, order }) =>
-    client
+  const promises = updates.map(({ id, order }) => {
+    let q = client
       .from('pages')
       .update({ order })
       .eq('id', id)
       .eq('is_published', false)
-      .is('deleted_at', null)
-  );
+      .is('deleted_at', null);
+
+    if (tenantId) {
+      q = q.eq('tenant_id', tenantId);
+    }
+
+    return q;
+  });
 
   const results = await Promise.all(promises);
 
@@ -584,6 +670,8 @@ export async function deletePage(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   const deletedAt = new Date().toISOString();
 
   // Get the draft page before deletion to know its parent_id and depth
@@ -596,13 +684,19 @@ export async function deletePage(id: string): Promise<void> {
   // Prevent deleting the homepage
   if (isHomepage(pageToDelete)) {
     // Check if there are other index pages in root folder
-    const { data: otherRootIndexPages, error: checkError } = await client
+    let rootIdxQ = client
       .from('pages')
       .select('id')
       .eq('is_index', true)
       .is('page_folder_id', null)
       .is('deleted_at', null)
       .neq('id', id);
+
+    if (tenantId) {
+      rootIdxQ = rootIdxQ.eq('tenant_id', tenantId);
+    }
+
+    const { data: otherRootIndexPages, error: checkError } = await rootIdxQ;
 
     if (checkError) {
       throw new Error(`Failed to check for other root index pages: ${checkError.message}`);
@@ -614,24 +708,36 @@ export async function deletePage(id: string): Promise<void> {
   }
 
   // Soft-delete draft page layers (publishing service will handle published versions)
-  const { error: layersError } = await client
+  let layersDel = client
     .from('page_layers')
     .update({ deleted_at: deletedAt })
     .eq('page_id', id)
     .eq('is_published', false)
     .is('deleted_at', null);
 
+  if (tenantId) {
+    layersDel = layersDel.eq('tenant_id', tenantId);
+  }
+
+  const { error: layersError } = await layersDel;
+
   if (layersError) {
     throw new Error(`Failed to delete page layers: ${layersError.message}`);
   }
 
   // Soft-delete the draft page (publishing service will handle published version)
-  const { error } = await client
+  let pageDel = client
     .from('pages')
     .update({ deleted_at: deletedAt })
     .eq('id', id)
     .eq('is_published', false)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    pageDel = pageDel.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await pageDel;
 
   if (error) {
     throw new Error(`Failed to delete page: ${error.message}`);
@@ -656,13 +762,21 @@ export async function restorePage(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Restore draft page (publishing service will handle published version)
-  const { error } = await client
+  let restoreQ = client
     .from('pages')
     .update({ deleted_at: null })
     .eq('id', id)
     .eq('is_published', false)
     .not('deleted_at', 'is', null); // Only restore if deleted
+
+  if (tenantId) {
+    restoreQ = restoreQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await restoreQ;
 
   if (error) {
     throw new Error(`Failed to restore page: ${error.message}`);
@@ -680,10 +794,15 @@ export async function forceDeletePage(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
-  const { error } = await client
-    .from('pages')
-    .delete()
-    .eq('id', id);
+  const tenantId = await resolveEffectiveTenantId();
+
+  let delQ = client.from('pages').delete().eq('id', id);
+
+  if (tenantId) {
+    delQ = delQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await delQ;
 
   if (error) {
     throw new Error(`Failed to force delete page: ${error.message}`);
@@ -701,10 +820,16 @@ export async function getAllDraftPages(includeDeleted = false): Promise<Page[]> 
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('pages')
     .select('*')
     .eq('is_published', false);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Exclude soft-deleted records by default
   if (!includeDeleted) {
@@ -735,12 +860,20 @@ export async function getPublishedPagesByIds(ids: string[]): Promise<Page[]> {
     return [];
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('pages')
     .select('*')
     .in('id', ids)
     .eq('is_published', true)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     throw new Error(`Failed to fetch published pages: ${error.message}`);
@@ -760,10 +893,16 @@ export async function getPagesByFolder(folderId: string | null): Promise<Page[]>
     throw new Error('Supabase not configured');
   }
 
-  const query = client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let query = client
     .from('pages')
     .select('*')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Handle null vs non-null folder_id
   const finalQuery = folderId === null
@@ -793,6 +932,8 @@ export async function duplicatePage(pageId: string): Promise<Page> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Get the original draft page
   const originalPage = await getPageById(pageId, false);
   if (!originalPage) {
@@ -819,6 +960,10 @@ export async function duplicatePage(pageId: string): Promise<Page> {
     .eq('is_published', false)
     .is('error_page', null)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Handle null parent folder properly
   if (originalPage.page_folder_id === null) {
@@ -849,20 +994,26 @@ export async function duplicatePage(pageId: string): Promise<Page> {
   await incrementSiblingOrders(newOrder, originalPage.depth, originalPage.page_folder_id);
 
   // Create the new page
+  const newPageRow: Record<string, unknown> = {
+    name: newName,
+    slug: newSlug,
+    is_published: false, // Always create as unpublished
+    page_folder_id: originalPage.page_folder_id,
+    order: newOrder,
+    depth: originalPage.depth,
+    is_index: false, // Don't duplicate index status
+    is_dynamic: originalPage.is_dynamic,
+    error_page: originalPage.error_page,
+    settings: originalPage.settings || {},
+  };
+
+  if (tenantId) {
+    newPageRow.tenant_id = tenantId;
+  }
+
   const { data: newPage, error: pageError } = await client
     .from('pages')
-    .insert({
-      name: newName,
-      slug: newSlug,
-      is_published: false, // Always create as unpublished
-      page_folder_id: originalPage.page_folder_id,
-      order: newOrder,
-      depth: originalPage.depth,
-      is_index: false, // Don't duplicate index status
-      is_dynamic: originalPage.is_dynamic,
-      error_page: originalPage.error_page,
-      settings: originalPage.settings || {},
-    })
+    .insert(newPageRow)
     .select()
     .single();
 
@@ -871,25 +1022,34 @@ export async function duplicatePage(pageId: string): Promise<Page> {
   }
 
   // Get the original page's draft layers
-  const { data: originalLayers, error: layersError } = await client
+  let layersSel = client
     .from('page_layers')
     .select('*')
     .eq('page_id', pageId)
     .eq('is_published', false)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
+    .limit(1);
+
+  if (tenantId) {
+    layersSel = layersSel.eq('tenant_id', tenantId);
+  }
+
+  const { data: originalLayers, error: layersError } = await layersSel.single();
 
   // If there are draft layers, duplicate them for the new page
   if (!layersError && originalLayers) {
-    const { error: newLayersError } = await client
-      .from('page_layers')
-      .insert({
-        page_id: newPage.id,
-        layers: originalLayers.layers,
-        is_published: false,
-      });
+    const layerInsert: Record<string, unknown> = {
+      page_id: newPage.id,
+      layers: originalLayers.layers,
+      is_published: false,
+    };
+
+    if (tenantId) {
+      layerInsert.tenant_id = tenantId;
+    }
+
+    const { error: newLayersError } = await client.from('page_layers').insert(layerInsert);
 
     if (newLayersError) {
       // If layer duplication fails, we should still return the page
@@ -912,23 +1072,31 @@ export async function getUnpublishedPagesCount(): Promise<number> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
+  let draftQ = client
+    .from('pages')
+    .select('id, content_hash, page_folder_id, page_layers!inner(content_hash)')
+    .eq('is_published', false)
+    .eq('page_layers.is_published', false)
+    .is('deleted_at', null)
+    .is('page_layers.deleted_at', null);
+
+  let pubQ = client
+    .from('pages')
+    .select('id, content_hash, page_folder_id, page_layers!inner(content_hash)')
+    .eq('is_published', true)
+    .eq('page_layers.is_published', true)
+    .is('deleted_at', null)
+    .is('page_layers.deleted_at', null);
+
+  if (tenantId) {
+    draftQ = draftQ.eq('tenant_id', tenantId);
+    pubQ = pubQ.eq('tenant_id', tenantId);
+  }
+
   // 2 bulk queries: all draft pages with layers + all published pages with layers
-  const [draftResult, publishedResult] = await Promise.all([
-    client
-      .from('pages')
-      .select('id, content_hash, page_folder_id, page_layers!inner(content_hash)')
-      .eq('is_published', false)
-      .eq('page_layers.is_published', false)
-      .is('deleted_at', null)
-      .is('page_layers.deleted_at', null),
-    client
-      .from('pages')
-      .select('id, content_hash, page_folder_id, page_layers!inner(content_hash)')
-      .eq('is_published', true)
-      .eq('page_layers.is_published', true)
-      .is('deleted_at', null)
-      .is('page_layers.deleted_at', null),
-  ]);
+  const [draftResult, publishedResult] = await Promise.all([draftQ, pubQ]);
 
   if (draftResult.error) {
     throw new Error(`Failed to fetch draft pages: ${draftResult.error.message}`);
@@ -992,8 +1160,10 @@ export async function getUnpublishedPages(): Promise<Page[]> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Get all draft pages with their layers' content_hash in a single efficient query
-  const { data: draftPagesWithLayers, error } = await client
+  let draftListQ = client
     .from('pages')
     .select(`
       *,
@@ -1004,6 +1174,12 @@ export async function getUnpublishedPages(): Promise<Page[]> {
     .is('deleted_at', null)
     .is('page_layers.deleted_at', null)
     .order('created_at', { ascending: false });
+
+  if (tenantId) {
+    draftListQ = draftListQ.eq('tenant_id', tenantId);
+  }
+
+  const { data: draftPagesWithLayers, error } = await draftListQ;
 
   if (error) {
     throw new Error(`Failed to fetch draft pages: ${error.message}`);
@@ -1018,7 +1194,7 @@ export async function getUnpublishedPages(): Promise<Page[]> {
   // Check each draft page
   for (const draftPage of draftPagesWithLayers) {
     // Check if a published version exists
-    const { data: publishedPageWithLayers } = await client
+    let pubOneQ = client
       .from('pages')
       .select(`
         id,
@@ -1030,8 +1206,13 @@ export async function getUnpublishedPages(): Promise<Page[]> {
       .eq('is_published', true)
       .eq('page_layers.is_published', true)
       .is('deleted_at', null)
-      .is('page_layers.deleted_at', null)
-      .single();
+      .is('page_layers.deleted_at', null);
+
+    if (tenantId) {
+      pubOneQ = pubOneQ.eq('tenant_id', tenantId);
+    }
+
+    const { data: publishedPageWithLayers } = await pubOneQ.single();
 
     // If no published version exists, needs first-time publishing
     if (!publishedPageWithLayers) {
@@ -1069,11 +1250,19 @@ export async function hardDeleteSoftDeletedPages(): Promise<{ count: number }> {
     throw new Error('Supabase not configured');
   }
 
-  const { data: deletedDrafts, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let selDel = client
     .from('pages')
     .select('id')
     .eq('is_published', false)
     .not('deleted_at', 'is', null);
+
+  if (tenantId) {
+    selDel = selDel.eq('tenant_id', tenantId);
+  }
+
+  const { data: deletedDrafts, error } = await selDel;
 
   if (error) {
     throw new Error(`Failed to fetch deleted draft pages: ${error.message}`);
@@ -1086,23 +1275,31 @@ export async function hardDeleteSoftDeletedPages(): Promise<{ count: number }> {
   const ids = deletedDrafts.map(p => p.id);
 
   // Delete published versions first (CASCADE removes page_layers)
-  const { error: pubError } = await client
-    .from('pages')
-    .delete()
-    .in('id', ids)
-    .eq('is_published', true);
+  let pubDel = client.from('pages').delete().in('id', ids).eq('is_published', true);
+
+  if (tenantId) {
+    pubDel = pubDel.eq('tenant_id', tenantId);
+  }
+
+  const { error: pubError } = await pubDel;
 
   if (pubError) {
     console.error('Failed to delete published pages:', pubError);
   }
 
   // Delete soft-deleted draft versions (CASCADE removes page_layers)
-  const { error: draftError } = await client
+  let draftDel = client
     .from('pages')
     .delete()
     .in('id', ids)
     .eq('is_published', false)
     .not('deleted_at', 'is', null);
+
+  if (tenantId) {
+    draftDel = draftDel.eq('tenant_id', tenantId);
+  }
+
+  const { error: draftError } = await draftDel;
 
   if (draftError) {
     throw new Error(`Failed to delete draft pages: ${draftError.message}`);

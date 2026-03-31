@@ -4,6 +4,7 @@
  * Data access layer for page folder operations with Supabase
  */
 
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import type { PageFolder } from '../../types';
 import { incrementSiblingOrders } from '../services/pageService';
@@ -56,10 +57,16 @@ export async function getAllPageFolders(filters?: QueryFilters): Promise<PageFol
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('page_folders')
     .select('*')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Apply filters if provided
   if (filters) {
@@ -89,13 +96,20 @@ export async function getPageFolderById(id: string, isPublished = false): Promis
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('page_folders')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -122,10 +136,16 @@ export async function getChildFolders(
     throw new Error('Supabase not configured');
   }
 
-  const query = client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let query = client
     .from('page_folders')
     .select('*')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Handle null vs non-null parent_id
   const finalQuery = parentId === null
@@ -151,9 +171,16 @@ export async function createPageFolder(folderData: CreatePageFolderData): Promis
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
+  const insertPayload: Record<string, unknown> = { ...folderData };
+  if (tenantId) {
+    insertPayload.tenant_id = tenantId;
+  }
+
   const { data, error } = await client
     .from('page_folders')
-    .insert(folderData)
+    .insert(insertPayload)
     .select()
     .single();
 
@@ -174,13 +201,19 @@ export async function updatePageFolder(id: string, updates: UpdatePageFolderData
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let upd = client
     .from('page_folders')
     .update(updates)
     .eq('id', id)
-    .eq('is_published', false)
-    .select()
-    .single();
+    .eq('is_published', false);
+
+  if (tenantId) {
+    upd = upd.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await upd.select().single();
 
   if (error) {
     throw new Error(`Failed to update page folder: ${error.message}`);
@@ -206,11 +239,19 @@ async function getDescendantFolderIdsFromDB(folderId: string): Promise<string[]>
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Fetch all non-deleted folders once
-  const { data: allFolders, error } = await client
+  let allFq = client
     .from('page_folders')
     .select('id, page_folder_id')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    allFq = allFq.eq('tenant_id', tenantId);
+  }
+
+  const { data: allFolders, error } = await allFq;
 
   if (error) {
     throw new Error(`Failed to fetch folders: ${error.message}`);
@@ -256,15 +297,23 @@ export async function batchUpdateFolderOrder(updates: Array<{ id: string; order:
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Update each folder's order (drafts only - users edit drafts)
-  const promises = updates.map(({ id, order }) =>
-    client
+  const promises = updates.map(({ id, order }) => {
+    let q = client
       .from('page_folders')
       .update({ order })
       .eq('id', id)
       .eq('is_published', false)
-      .is('deleted_at', null)
-  );
+      .is('deleted_at', null);
+
+    if (tenantId) {
+      q = q.eq('tenant_id', tenantId);
+    }
+
+    return q;
+  });
 
   const results = await Promise.all(promises);
 
@@ -287,6 +336,8 @@ export async function reorderSiblings(parentId: string | null, depth: number): P
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Fetch sibling folders - filter by parent_id AND depth (drafts only)
   let foldersQuery = client
     .from('page_folders')
@@ -294,6 +345,10 @@ export async function reorderSiblings(parentId: string | null, depth: number): P
     .eq('depth', depth)
     .eq('is_published', false)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    foldersQuery = foldersQuery.eq('tenant_id', tenantId);
+  }
 
   if (parentId === null) {
     foldersQuery = foldersQuery.is('page_folder_id', null);
@@ -315,6 +370,10 @@ export async function reorderSiblings(parentId: string | null, depth: number): P
     .eq('is_published', false)
     .is('deleted_at', null)
     .is('error_page', null);
+
+  if (tenantId) {
+    pagesQuery = pagesQuery.eq('tenant_id', tenantId);
+  }
 
   if (parentId === null) {
     pagesQuery = pagesQuery.is('page_folder_id', null);
@@ -393,6 +452,8 @@ export async function deletePageFolder(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   const deletedAt = new Date().toISOString();
 
   // Get the folder before deletion to know its parent_id and depth
@@ -406,12 +467,18 @@ export async function deletePageFolder(id: string): Promise<void> {
   const allFolderIds = [id, ...descendantFolderIds];
 
   // Query 2: Get all draft page IDs within these folders
-  const { data: affectedPages, error: fetchPagesError } = await client
+  let affPg = client
     .from('pages')
     .select('id')
     .in('page_folder_id', allFolderIds)
     .eq('is_published', false)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    affPg = affPg.eq('tenant_id', tenantId);
+  }
+
+  const { data: affectedPages, error: fetchPagesError } = await affPg;
 
   if (fetchPagesError) {
     throw new Error(`Failed to fetch pages in folder: ${fetchPagesError.message}`);
@@ -421,12 +488,18 @@ export async function deletePageFolder(id: string): Promise<void> {
 
   // Query 3: Soft-delete all draft page_layers for affected pages (if any)
   if (affectedPageIds.length > 0) {
-    const { error: layersError } = await client
+    let layUpd = client
       .from('page_layers')
       .update({ deleted_at: deletedAt })
       .in('page_id', affectedPageIds)
       .eq('is_published', false)
       .is('deleted_at', null);
+
+    if (tenantId) {
+      layUpd = layUpd.eq('tenant_id', tenantId);
+    }
+
+    const { error: layersError } = await layUpd;
 
     if (layersError) {
       throw new Error(`Failed to delete page layers: ${layersError.message}`);
@@ -434,24 +507,36 @@ export async function deletePageFolder(id: string): Promise<void> {
   }
 
   // Query 4: Soft-delete all draft pages within this folder and its descendants
-  const { error: pagesError } = await client
+  let pgUpd = client
     .from('pages')
     .update({ deleted_at: deletedAt })
     .in('page_folder_id', allFolderIds)
     .eq('is_published', false)
     .is('deleted_at', null);
 
+  if (tenantId) {
+    pgUpd = pgUpd.eq('tenant_id', tenantId);
+  }
+
+  const { error: pagesError } = await pgUpd;
+
   if (pagesError) {
     throw new Error(`Failed to delete pages in folder: ${pagesError.message}`);
   }
 
   // Query 5: Soft-delete ALL draft folders (parent + descendants) in a single query
-  const { error: foldersError } = await client
+  let foldUpd = client
     .from('page_folders')
     .update({ deleted_at: deletedAt })
     .in('id', allFolderIds)
     .eq('is_published', false)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    foldUpd = foldUpd.eq('tenant_id', tenantId);
+  }
+
+  const { error: foldersError } = await foldUpd;
 
   if (foldersError) {
     throw new Error(`Failed to delete folders: ${foldersError.message}`);
@@ -476,13 +561,21 @@ export async function restorePageFolder(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Restore draft folder (publishing service will handle published version)
-  const { error } = await client
+  let restQ = client
     .from('page_folders')
     .update({ deleted_at: null })
     .eq('id', id)
     .eq('is_published', false)
     .not('deleted_at', 'is', null); // Only restore if deleted
+
+  if (tenantId) {
+    restQ = restQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await restQ;
 
   if (error) {
     throw new Error(`Failed to restore page folder: ${error.message}`);
@@ -500,10 +593,15 @@ export async function forceDeletePageFolder(id: string): Promise<void> {
     throw new Error('Supabase not configured');
   }
 
-  const { error } = await client
-    .from('page_folders')
-    .delete()
-    .eq('id', id);
+  const tenantId = await resolveEffectiveTenantId();
+
+  let delQ = client.from('page_folders').delete().eq('id', id);
+
+  if (tenantId) {
+    delQ = delQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await delQ;
 
   if (error) {
     throw new Error(`Failed to force delete page folder: ${error.message}`);
@@ -520,13 +618,20 @@ export async function getDraftPageFolderById(id: string): Promise<PageFolder | n
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('page_folders')
     .select('*')
     .eq('id', id)
     .eq('is_published', false)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -548,13 +653,20 @@ export async function getPublishedPageFolderById(id: string): Promise<PageFolder
     throw new Error('Supabase not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('page_folders')
     .select('*')
     .eq('id', id)
     .eq('is_published', true)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -577,10 +689,16 @@ export async function getAllDraftPageFolders(includeSoftDeleted = false): Promis
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('page_folders')
     .select('*')
     .eq('is_published', false);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   if (!includeSoftDeleted) {
     query = query.is('deleted_at', null);
@@ -608,10 +726,16 @@ export async function getAllPublishedPageFolders(includeSoftDeleted = false): Pr
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('page_folders')
     .select('*')
     .eq('is_published', true);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   if (!includeSoftDeleted) {
     query = query.is('deleted_at', null);
@@ -641,11 +765,19 @@ export async function getPublishedPageFoldersByIds(ids: string[]): Promise<PageF
     return [];
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('page_folders')
     .select('*')
     .in('id', ids)
     .eq('is_published', true);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     throw new Error(`Failed to fetch published folders: ${error.message}`);
@@ -666,11 +798,17 @@ export async function getPageFolderBySlug(slug: string, filters?: QueryFilters):
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('page_folders')
     .select('*')
     .eq('slug', slug)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Apply additional filters if provided
   if (filters) {
@@ -727,6 +865,8 @@ export async function duplicatePageFolder(folderId: string): Promise<PageFolder>
     throw new Error('Supabase not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Get the original folder
   const originalFolder = await getPageFolderById(folderId);
   if (!originalFolder) {
@@ -746,6 +886,10 @@ export async function duplicatePageFolder(folderId: string): Promise<PageFolder>
     .from('page_folders')
     .select('slug')
     .is('deleted_at', null);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Handle null parent folder properly
   if (originalFolder.page_folder_id === null) {
@@ -776,17 +920,23 @@ export async function duplicatePageFolder(folderId: string): Promise<PageFolder>
   await incrementSiblingOrders(newOrder, originalFolder.depth, originalFolder.page_folder_id);
 
   // Create the new folder
+  const newFolderRow: Record<string, unknown> = {
+    name: newName,
+    slug: newSlug,
+    is_published: false, // Always create as unpublished
+    page_folder_id: originalFolder.page_folder_id,
+    order: newOrder,
+    depth: originalFolder.depth,
+    settings: originalFolder.settings || {},
+  };
+
+  if (tenantId) {
+    newFolderRow.tenant_id = tenantId;
+  }
+
   const { data: newFolder, error: folderError } = await client
     .from('page_folders')
-    .insert({
-      name: newName,
-      slug: newSlug,
-      is_published: false, // Always create as unpublished
-      page_folder_id: originalFolder.page_folder_id,
-      order: newOrder,
-      depth: originalFolder.depth,
-      settings: originalFolder.settings || {},
-    })
+    .insert(newFolderRow)
     .select()
     .single();
 
@@ -795,7 +945,7 @@ export async function duplicatePageFolder(folderId: string): Promise<PageFolder>
   }
 
   // Now recursively duplicate all child folders and pages
-  await duplicateFolderContents(client, folderId, newFolder.id);
+  await duplicateFolderContents(client, folderId, newFolder.id, tenantId);
 
   return newFolder;
 }
@@ -805,31 +955,45 @@ export async function duplicatePageFolder(folderId: string): Promise<PageFolder>
  * @param client - Supabase client
  * @param originalFolderId - Original folder ID
  * @param newFolderId - New folder ID
+ * @param tenantId - Effective tenant (null = single-tenant / no filter)
  */
 async function duplicateFolderContents(
   client: any,
   originalFolderId: string,
-  newFolderId: string
+  newFolderId: string,
+  tenantId: string | null
 ): Promise<void> {
   // Get all child folders
-  const { data: childFolders, error: foldersError } = await client
+  let cfQ = client
     .from('page_folders')
     .select('*')
     .eq('page_folder_id', originalFolderId)
     .is('deleted_at', null)
     .order('order', { ascending: true });
 
+  if (tenantId) {
+    cfQ = cfQ.eq('tenant_id', tenantId);
+  }
+
+  const { data: childFolders, error: foldersError } = await cfQ;
+
   if (foldersError) {
     throw new Error(`Failed to fetch child folders: ${foldersError.message}`);
   }
 
   // Get all child pages
-  const { data: childPages, error: pagesError } = await client
+  let cpQ = client
     .from('pages')
     .select('*')
     .eq('page_folder_id', originalFolderId)
     .is('deleted_at', null)
     .order('order', { ascending: true });
+
+  if (tenantId) {
+    cpQ = cpQ.eq('tenant_id', tenantId);
+  }
+
+  const { data: childPages, error: pagesError } = await cpQ;
 
   if (pagesError) {
     throw new Error(`Failed to fetch child pages: ${pagesError.message}`);
@@ -843,17 +1007,23 @@ async function duplicateFolderContents(
       const timestamp = Date.now() + Math.random(); // Add randomness for uniqueness
       const newFolderSlug = `folder-${Math.floor(timestamp)}`;
 
+      const childFolderRow: Record<string, unknown> = {
+        name: folder.name,
+        slug: newFolderSlug,
+        is_published: false,
+        page_folder_id: newFolderId, // Point to new parent
+        order: folder.order,
+        depth: folder.depth,
+        settings: folder.settings || {},
+      };
+
+      if (tenantId) {
+        childFolderRow.tenant_id = tenantId;
+      }
+
       const { data: duplicatedFolder, error: dupError } = await client
         .from('page_folders')
-        .insert({
-          name: folder.name,
-          slug: newFolderSlug,
-          is_published: false,
-          page_folder_id: newFolderId, // Point to new parent
-          order: folder.order,
-          depth: folder.depth,
-          settings: folder.settings || {},
-        })
+        .insert(childFolderRow)
         .select()
         .single();
 
@@ -864,7 +1034,7 @@ async function duplicateFolderContents(
       folderIdMap.set(folder.id, duplicatedFolder.id);
 
       // Recursively duplicate this folder's contents
-      await duplicateFolderContents(client, folder.id, duplicatedFolder.id);
+      await duplicateFolderContents(client, folder.id, duplicatedFolder.id, tenantId);
     }
   }
 
@@ -874,20 +1044,26 @@ async function duplicateFolderContents(
       const timestamp = Date.now() + Math.random();
       const newPageSlug = page.is_index ? '' : `page-${Math.floor(timestamp)}`;
 
+      const childPageRow: Record<string, unknown> = {
+        name: page.name,
+        slug: newPageSlug,
+        is_published: false,
+        page_folder_id: newFolderId, // Point to new parent
+        order: page.order,
+        depth: page.depth,
+        is_index: page.is_index,
+        is_dynamic: page.is_dynamic,
+        error_page: page.error_page,
+        settings: page.settings || {},
+      };
+
+      if (tenantId) {
+        childPageRow.tenant_id = tenantId;
+      }
+
       const { data: duplicatedPage, error: dupError } = await client
         .from('pages')
-        .insert({
-          name: page.name,
-          slug: newPageSlug,
-          is_published: false,
-          page_folder_id: newFolderId, // Point to new parent
-          order: page.order,
-          depth: page.depth,
-          is_index: page.is_index,
-          is_dynamic: page.is_dynamic,
-          error_page: page.error_page,
-          settings: page.settings || {},
-        })
+        .insert(childPageRow)
         .select()
         .single();
 
@@ -896,25 +1072,34 @@ async function duplicateFolderContents(
       }
 
       // Duplicate the page's draft layers if they exist
-      const { data: originalLayers, error: layersError } = await client
+      let laySel = client
         .from('page_layers')
         .select('*')
         .eq('page_id', page.id)
         .eq('is_published', false)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
+
+      if (tenantId) {
+        laySel = laySel.eq('tenant_id', tenantId);
+      }
+
+      const { data: originalLayers, error: layersError } = await laySel.single();
 
       // If there are draft layers, duplicate them for the new page
       if (!layersError && originalLayers) {
-        await client
-          .from('page_layers')
-          .insert({
-            page_id: duplicatedPage.id,
-            layers: originalLayers.layers,
-            is_published: false,
-          });
+        const layerIns: Record<string, unknown> = {
+          page_id: duplicatedPage.id,
+          layers: originalLayers.layers,
+          is_published: false,
+        };
+
+        if (tenantId) {
+          layerIns.tenant_id = tenantId;
+        }
+
+        await client.from('page_layers').insert(layerIns);
       }
     }
   }
