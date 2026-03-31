@@ -1,3 +1,4 @@
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import type { CollectionItemValue, CollectionFieldType } from '@/types';
 import { castValue, valueToString } from '../collection-utils';
@@ -22,11 +23,19 @@ async function updateContentHash(itemId: string, isPublished: boolean, hash: str
   const client = await getSupabaseAdmin();
   if (!client) throw new Error('Supabase client not configured');
 
-  const { error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collection_items')
     .update({ content_hash: hash, updated_at: new Date().toISOString() })
     .eq('id', itemId)
     .eq('is_published', isPublished);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await q;
 
   if (error) throw new Error(`Failed to update content_hash: ${error.message}`);
 }
@@ -53,6 +62,7 @@ export async function insertValuesBulk(
 
   if (values.length === 0) return;
 
+  const tenantId = await resolveEffectiveTenantId();
   const now = new Date().toISOString();
   const valuesToInsert = values.map(v => ({
     id: randomUUID(),
@@ -62,6 +72,7 @@ export async function insertValuesBulk(
     is_published: v.is_published ?? false,
     created_at: now,
     updated_at: now,
+    ...(tenantId ? { tenant_id: tenantId } : {}),
   }));
 
   const { error } = await client
@@ -96,6 +107,8 @@ export async function getValuesByItemIds(
     return {};
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Batch into chunks to avoid exceeding PostgREST URL length limits.
   // Keep chunks small enough that total value rows stay under Supabase's
   // default 1000-row response limit (50 items × ~20 fields = ~1000 rows).
@@ -105,13 +118,19 @@ export async function getValuesByItemIds(
   for (let i = 0; i < item_ids.length; i += CHUNK_SIZE) {
     const chunk = item_ids.slice(i, i + CHUNK_SIZE);
 
-    const { data, error } = await client
+    let valQ = client
       .from('collection_item_values')
       .select('item_id, field_id, value, collection_fields!inner(type)')
       .in('item_id', chunk)
       .eq('is_published', is_published)
       .is('deleted_at', null)
       .limit(5000);
+
+    if (tenantId) {
+      valQ = valQ.eq('tenant_id', tenantId);
+    }
+
+    const { data, error } = await valQ;
 
     if (error) {
       throw new Error(`Failed to fetch item values: ${error.message}`);
@@ -144,12 +163,20 @@ export async function getValuesByItemId(
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collection_item_values')
     .select('*')
     .eq('item_id', item_id)
     .eq('is_published', is_published)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     throw new Error(`Failed to fetch item values: ${error.message}`);
@@ -173,12 +200,20 @@ export async function getValuesByFieldId(
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collection_item_values')
     .select('*')
     .eq('field_id', field_id)
     .eq('is_published', is_published)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     throw new Error(`Failed to fetch field values: ${error.message}`);
@@ -204,14 +239,21 @@ export async function getValue(
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collection_item_values')
     .select('*')
     .eq('item_id', item_id)
     .eq('field_id', field_id)
     .eq('is_published', is_published)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to fetch value: ${error.message}`);
@@ -239,20 +281,26 @@ export async function setValue(
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Check if value already exists for this specific version (draft or published)
   const existing = await getValue(item_id, field_id, is_published);
   if (existing) {
     // Update existing value
-    const { data, error } = await client
+    let upd = client
       .from('collection_item_values')
       .update({
         value,
         updated_at: new Date().toISOString(),
       })
       .eq('id', existing.id)
-      .eq('is_published', is_published)
-      .select()
-      .single();
+      .eq('is_published', is_published);
+
+    if (tenantId) {
+      upd = upd.eq('tenant_id', tenantId);
+    }
+
+    const { data, error } = await upd.select().single();
 
     if (error) {
       throw new Error(`Failed to update value: ${error.message}`);
@@ -261,17 +309,23 @@ export async function setValue(
     return data;
   } else {
     // Create new value
+    const ins: Record<string, unknown> = {
+      id: randomUUID(),
+      item_id,
+      field_id,
+      value,
+      is_published,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (tenantId) {
+      ins.tenant_id = tenantId;
+    }
+
     const { data, error } = await client
       .from('collection_item_values')
-      .insert({
-        id: randomUUID(),
-        item_id,
-        field_id,
-        value,
-        is_published,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .insert(ins)
       .select()
       .single();
 
@@ -338,14 +392,22 @@ export async function setValuesByFieldName(
     }, {} as Record<string, string | null>);
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Get field mappings to validate field IDs and get types
   // Fields are fetched with the same is_published status as the values
-  const { data: fields, error } = await client
+  let fldQ = client
     .from('collection_fields')
     .select('id, type, key')
     .eq('collection_id', collection_id)
     .eq('is_published', is_published)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    fldQ = fldQ.eq('tenant_id', tenantId);
+  }
+
+  const { data: fields, error } = await fldQ;
 
   if (error) {
     throw new Error(`Failed to fetch fields: ${error.message}`);
@@ -430,7 +492,9 @@ export async function deleteValue(
     throw new Error('Supabase client not configured');
   }
 
-  const { error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let delQ = client
     .from('collection_item_values')
     .update({
       deleted_at: new Date().toISOString(),
@@ -440,6 +504,12 @@ export async function deleteValue(
     .eq('field_id', field_id)
     .eq('is_published', is_published)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    delQ = delQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await delQ;
 
   if (error) {
     throw new Error(`Failed to delete value: ${error.message}`);
@@ -460,6 +530,8 @@ export async function publishValues(item_id: string): Promise<number> {
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Get all draft values for this item
   const draftValues = await getValuesByItemId(item_id, false);
 
@@ -469,15 +541,28 @@ export async function publishValues(item_id: string): Promise<number> {
 
   // Prepare values for batch upsert
   const now = new Date().toISOString();
-  const valuesToUpsert = draftValues.map(value => ({
-    id: value.id,
-    item_id: value.item_id,
-    field_id: value.field_id,
-    value: value.value,
-    is_published: true,
-    created_at: value.created_at,
-    updated_at: now,
-  }));
+  const valuesToUpsert = draftValues.map(value => {
+    const rowTid =
+      tenantId ??
+      (value as { tenant_id?: string | null }).tenant_id ??
+      undefined;
+
+    const row: Record<string, unknown> = {
+      id: value.id,
+      item_id: value.item_id,
+      field_id: value.field_id,
+      value: value.value,
+      is_published: true,
+      created_at: value.created_at,
+      updated_at: now,
+    };
+
+    if (rowTid) {
+      row.tenant_id = rowTid;
+    }
+
+    return row;
+  });
 
   // Batch upsert all values
   const { error } = await client

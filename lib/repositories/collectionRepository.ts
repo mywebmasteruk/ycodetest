@@ -1,3 +1,4 @@
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import type { Collection, CreateCollectionData, UpdateCollectionData } from '@/types';
 import { randomUUID } from 'crypto';
@@ -31,6 +32,8 @@ export async function getAllCollections(filters?: QueryFilters): Promise<Collect
 
   const isPublished = filters?.is_published ?? false;
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('collections')
     .select(`
@@ -40,6 +43,10 @@ export async function getAllCollections(filters?: QueryFilters): Promise<Collect
     .eq('is_published', isPublished)
     .order('order', { ascending: true })
     .order('created_at', { ascending: false });
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Apply deleted filter
   if (filters?.deleted === false) {
@@ -95,12 +102,20 @@ export async function getPublishedCollectionIds(collectionIds: string[]): Promis
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collections')
     .select('id')
     .in('id', collectionIds)
     .eq('is_published', true)
     .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     throw new Error(`Failed to check published collections: ${error.message}`);
@@ -126,11 +141,17 @@ export async function getCollectionById(
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   let query = client
     .from('collections')
     .select('*')
     .eq('id', id)
     .eq('is_published', isPublished);
+
+  if (tenantId) {
+    query = query.eq('tenant_id', tenantId);
+  }
 
   // Filter out deleted unless explicitly requested
   if (!includeDeleted) {
@@ -158,13 +179,20 @@ export async function getCollectionByName(name: string, isPublished: boolean = f
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let q = client
     .from('collections')
     .select('*')
     .eq('name', name)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    q = q.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await q.single();
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to fetch collection: ${error.message}`);
@@ -183,19 +211,27 @@ export async function createCollection(collectionData: CreateCollectionData): Pr
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   const id = randomUUID();
   const isPublished = collectionData.is_published ?? false;
 
+  const insertRow: Record<string, unknown> = {
+    id,
+    ...collectionData,
+    order: collectionData.order ?? 0,
+    is_published: isPublished,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (tenantId) {
+    insertRow.tenant_id = tenantId;
+  }
+
   const { data, error } = await client
     .from('collections')
-    .insert({
-      id,
-      ...collectionData,
-      order: collectionData.order ?? 0,
-      is_published: isPublished,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .insert(insertRow)
     .select()
     .single();
 
@@ -223,7 +259,9 @@ export async function updateCollection(
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  let upd = client
     .from('collections')
     .update({
       ...collectionData,
@@ -231,9 +269,13 @@ export async function updateCollection(
     })
     .eq('id', id)
     .eq('is_published', isPublished)
-    .is('deleted_at', null)
-    .select()
-    .single();
+    .is('deleted_at', null);
+
+  if (tenantId) {
+    upd = upd.eq('tenant_id', tenantId);
+  }
+
+  const { data, error } = await upd.select().single();
 
   if (error) {
     throw new Error(`Failed to update collection: ${error.message}`);
@@ -255,10 +297,12 @@ export async function deleteCollection(id: string, isPublished: boolean = false)
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   const now = new Date().toISOString();
 
   // Soft delete the collection
-  const { error: collectionError } = await client
+  let colUpd = client
     .from('collections')
     .update({
       deleted_at: now,
@@ -268,12 +312,18 @@ export async function deleteCollection(id: string, isPublished: boolean = false)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
+  if (tenantId) {
+    colUpd = colUpd.eq('tenant_id', tenantId);
+  }
+
+  const { error: collectionError } = await colUpd;
+
   if (collectionError) {
     throw new Error(`Failed to delete collection: ${collectionError.message}`);
   }
 
   // Soft delete all related fields
-  const { error: fieldsError } = await client
+  let fldUpd = client
     .from('collection_fields')
     .update({
       deleted_at: now,
@@ -283,12 +333,18 @@ export async function deleteCollection(id: string, isPublished: boolean = false)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
+  if (tenantId) {
+    fldUpd = fldUpd.eq('tenant_id', tenantId);
+  }
+
+  const { error: fieldsError } = await fldUpd;
+
   if (fieldsError) {
     console.error('Error soft-deleting collection fields:', fieldsError);
   }
 
   // Soft delete all related items
-  const { error: itemsError } = await client
+  let itmUpd = client
     .from('collection_items')
     .update({
       deleted_at: now,
@@ -298,22 +354,34 @@ export async function deleteCollection(id: string, isPublished: boolean = false)
     .eq('is_published', isPublished)
     .is('deleted_at', null);
 
+  if (tenantId) {
+    itmUpd = itmUpd.eq('tenant_id', tenantId);
+  }
+
+  const { error: itemsError } = await itmUpd;
+
   if (itemsError) {
     console.error('Error soft-deleting collection items:', itemsError);
   }
 
   // Soft delete all item values (these are linked to items via FK)
   // We need to get all items first to delete their values
-  const { data: items } = await client
+  let itmSel = client
     .from('collection_items')
     .select('id')
     .eq('collection_id', id)
     .eq('is_published', isPublished);
 
+  if (tenantId) {
+    itmSel = itmSel.eq('tenant_id', tenantId);
+  }
+
+  const { data: items } = await itmSel;
+
   if (items && items.length > 0) {
     const itemIds = items.map(item => item.id);
 
-    const { error: valuesError } = await client
+    let valUpd = client
       .from('collection_item_values')
       .update({
         deleted_at: now,
@@ -322,6 +390,12 @@ export async function deleteCollection(id: string, isPublished: boolean = false)
       .in('item_id', itemIds)
       .eq('is_published', isPublished)
       .is('deleted_at', null);
+
+    if (tenantId) {
+      valUpd = valUpd.eq('tenant_id', tenantId);
+    }
+
+    const { error: valuesError } = await valUpd;
 
     if (valuesError) {
       console.error('Error soft-deleting collection item values:', valuesError);
@@ -343,12 +417,16 @@ export async function hardDeleteCollection(id: string, isPublished: boolean = fa
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Hard delete the collection (CASCADE will delete all related data)
-  const { error } = await client
-    .from('collections')
-    .delete()
-    .eq('id', id)
-    .eq('is_published', isPublished);
+  let delQ = client.from('collections').delete().eq('id', id).eq('is_published', isPublished);
+
+  if (tenantId) {
+    delQ = delQ.eq('tenant_id', tenantId);
+  }
+
+  const { error } = await delQ;
 
   if (error) {
     throw new Error(`Failed to hard delete collection: ${error.message}`);
@@ -374,18 +452,28 @@ export async function publishCollection(id: string): Promise<Collection> {
     throw new Error('Draft collection not found');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+  const rowTid =
+    tenantId ?? (draft as { tenant_id?: string | null }).tenant_id ?? undefined;
+
+  const upsertRow: Record<string, unknown> = {
+    id: draft.id, // Same UUID
+    name: draft.name,
+    sorting: draft.sorting,
+    order: draft.order,
+    is_published: true,
+    created_at: draft.created_at,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (rowTid) {
+    upsertRow.tenant_id = rowTid;
+  }
+
   // Upsert published version (composite key handles insert/update automatically)
   const { data, error } = await client
     .from('collections')
-    .upsert({
-      id: draft.id, // Same UUID
-      name: draft.name,
-      sorting: draft.sorting,
-      order: draft.order,
-      is_published: true,
-      created_at: draft.created_at,
-      updated_at: new Date().toISOString(),
-    }, {
+    .upsert(upsertRow, {
       onConflict: 'id,is_published', // Composite primary key
     }).select()
     .single();
@@ -427,11 +515,20 @@ export async function getUnpublishedCollections(): Promise<Collection[]> {
 
   // Batch fetch all published collections for comparison
   const draftIds = draftCollections.map(c => c.id);
-  const { data: publishedCollections, error: publishedError } = await client
+
+  const tenantId = await resolveEffectiveTenantId();
+
+  let pubQ = client
     .from('collections')
     .select('*')
     .in('id', draftIds)
     .eq('is_published', true);
+
+  if (tenantId) {
+    pubQ = pubQ.eq('tenant_id', tenantId);
+  }
+
+  const { data: publishedCollections, error: publishedError } = await pubQ;
 
   if (publishedError) {
     throw new Error(`Failed to fetch published collections: ${publishedError.message}`);
@@ -462,9 +559,11 @@ export async function reorderCollections(isPublished: boolean, collectionIds: st
     throw new Error('Supabase client not configured');
   }
 
+  const tenantId = await resolveEffectiveTenantId();
+
   // Update order for each collection
-  const updates = collectionIds.map((id, index) =>
-    client
+  const updates = collectionIds.map((id, index) => {
+    let u = client
       .from('collections')
       .update({
         order: index,
@@ -472,8 +571,14 @@ export async function reorderCollections(isPublished: boolean, collectionIds: st
       })
       .eq('id', id)
       .eq('is_published', isPublished)
-      .is('deleted_at', null)
-  );
+      .is('deleted_at', null);
+
+    if (tenantId) {
+      u = u.eq('tenant_id', tenantId);
+    }
+
+    return u;
+  });
 
   const results = await Promise.all(updates);
 

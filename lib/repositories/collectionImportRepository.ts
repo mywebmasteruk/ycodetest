@@ -1,4 +1,6 @@
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getCollectionById } from '@/lib/repositories/collectionRepository';
 import type { CollectionImport, CollectionImportStatus } from '@/types';
 
 /**
@@ -23,6 +25,11 @@ export async function createImport(data: CreateImportData): Promise<CollectionIm
 
   if (!client) {
     throw new Error('Supabase client not configured');
+  }
+
+  const collection = await getCollectionById(data.collection_id, false, true);
+  if (!collection) {
+    throw new Error('Collection not found');
   }
 
   const { data: result, error } = await client
@@ -67,6 +74,15 @@ export async function getImportById(id: string): Promise<CollectionImport | null
     throw new Error(`Failed to fetch import: ${error.message}`);
   }
 
+  if (!data) {
+    return null;
+  }
+
+  const collection = await getCollectionById(data.collection_id, false, true);
+  if (!collection) {
+    return null;
+  }
+
   return data;
 }
 
@@ -80,18 +96,37 @@ export async function getPendingImports(limit: number = 5): Promise<CollectionIm
     throw new Error('Supabase client not configured');
   }
 
-  const { data, error } = await client
+  const tenantId = await resolveEffectiveTenantId();
+
+  const fetchLimit = tenantId ? Math.max(limit * 20, limit) : limit;
+
+  const { data: raw, error } = await client
     .from('collection_imports')
     .select('*')
     .in('status', ['pending', 'processing'])
     .order('created_at', { ascending: true })
-    .limit(limit);
+    .limit(fetchLimit);
 
   if (error) {
     throw new Error(`Failed to fetch pending imports: ${error.message}`);
   }
 
-  return data || [];
+  const rows = raw || [];
+
+  if (!tenantId) {
+    return rows.slice(0, limit);
+  }
+
+  const visible: CollectionImport[] = [];
+  for (const row of rows) {
+    const col = await getCollectionById(row.collection_id, false, true);
+    if (col) {
+      visible.push(row);
+    }
+    if (visible.length >= limit) break;
+  }
+
+  return visible;
 }
 
 /**
@@ -105,6 +140,11 @@ export async function updateImportStatus(
 
   if (!client) {
     throw new Error('Supabase client not configured');
+  }
+
+  const existing = await getImportById(id);
+  if (!existing) {
+    throw new Error('Import not found');
   }
 
   const { error } = await client
@@ -133,6 +173,11 @@ export async function updateImportProgress(
 
   if (!client) {
     throw new Error('Supabase client not configured');
+  }
+
+  const existing = await getImportById(id);
+  if (!existing) {
+    throw new Error('Import not found');
   }
 
   const updateData: Record<string, unknown> = {
@@ -170,6 +215,11 @@ export async function completeImport(
     throw new Error('Supabase client not configured');
   }
 
+  const existing = await getImportById(id);
+  if (!existing) {
+    throw new Error('Import not found');
+  }
+
   const status: CollectionImportStatus = failedRows > 0 && processedRows === 0 ? 'failed' : 'completed';
 
   const { error } = await client
@@ -198,6 +248,11 @@ export async function deleteImport(id: string): Promise<void> {
     throw new Error('Supabase client not configured');
   }
 
+  const existing = await getImportById(id);
+  if (!existing) {
+    throw new Error('Import not found');
+  }
+
   const { error } = await client
     .from('collection_imports')
     .delete()
@@ -216,6 +271,11 @@ export async function getImportsByCollectionId(collectionId: string): Promise<Co
 
   if (!client) {
     throw new Error('Supabase client not configured');
+  }
+
+  const collection = await getCollectionById(collectionId, false, true);
+  if (!collection) {
+    return [];
   }
 
   const { data, error } = await client

@@ -7,7 +7,7 @@ The `tenant-multi` branch was reset toward **vanilla YCode** (`upstream/main`) f
 - **Database** still has **multi-tenant schema** (e.g. `tenant_id`, per-tenant unique indexes) from migrations that were **kept**:
   - `database/migrations/20260325120000_pages_slug_unique_per_tenant.ts`
   - `database/migrations/20260325130000_tenant_scope_unique_constraints.ts`
-- **Code** uses the **service role** via `getSupabaseAdmin()`; **app-layer** `tenant_id` filters are being restored incrementally (RLS is not assumed). **Done:** `settingsRepository`, `pageRepository`, `pageLayersRepository`, `pageFolderRepository` (via `resolveEffectiveTenantId()` when non-null). **Still pending:** collections, components, public `page-fetcher` / `generateStaticParams`, and other repos listed below.
+- **Code** uses the **service role** via `getSupabaseAdmin()`; **app-layer** `tenant_id` filters are being restored incrementally (RLS is not assumed). **Done:** `settingsRepository`, `pageRepository`, `pageLayersRepository`, `pageFolderRepository`, `collectionRepository`, `collectionFieldRepository`, `collectionItemValueRepository`, `collectionItemRepository`, and `collectionImportRepository` (imports scoped via `getCollectionById` because `collection_imports` has no `tenant_id`). **Still pending:** components, layer styles / locales / fonts / assets repos as needed, public `page-fetcher` / `generateStaticParams`, and other call sites listed below.
 - On a **shared Supabase** with multiple tenants, the builder and public site can see **mixed or duplicate rows** (e.g. multiple `published_at` / same `key` in `settings`). **Do not treat production as secure or correct until tenant scoping is restored** (or use a **single-tenant copy** of the DB for debugging).
 
 ## What was kept (not reverted)
@@ -27,10 +27,10 @@ The reset aligned `next.config.ts` with **upstream**, which **drops** the extra 
 
 Roughly the Git diff between `upstream/main` and pre-reset `tenant-multi` (excluding the rows above):
 
-- **Routing:** removed root `middleware.ts`; added **`proxy.ts`** (auth / public API only — **no subdomain tenant resolution**).
+- **Routing:** root **`proxy.ts`** sets `x-tenant-id` from subdomain / `tenant_registry`, strips client tenant headers, enforces auth on `/ycode/api`, and **403** when JWT `user_metadata.tenant_id` disagrees with `x-tenant-id`.
 - **`lib/supabase-server.ts`:** service-role client only (no session + tenant header layering).
 - **`lib/supabase-browser.ts`:** upstream version (no shared cookie-domain helper).
-- **Repositories:** `collections`, `collectionItem`, `components`, `layer_styles`, `locales`, `fonts`, `assets`, `asset_folders`, etc. — still **without** per-request `resolveEffectiveTenantId()` scoping (unlike `settings` + pages tree repos after the latest fork work).
+- **Repositories:** CMS `collection*` repos now use `resolveEffectiveTenantId()` where the schema has `tenant_id`; **`collectionService`**, **`components`**, `layer_styles`, `locales`, `fonts`, `assets`, `asset_folders`, and other tables may still need the same pattern if they touch shared Supabase from the builder.
 - **`lib/page-fetcher.ts`:** upstream (public site fetch path).
 - **Auth routes:** `app/ycode/api/auth/callback`, `invite`; **`app/ycode/accept-invite`**, **`stores/useAuthStore.ts`**.
 - **Other:** `app/page.tsx`, `components/MigrationChecker.tsx`, `app/ycode/api/collections/[id]/items/route.ts`, `lib/templates/blocks.ts`, `lib/version-utils.ts`, `next.config.ts`, `.env.example`, `.gitignore`.
@@ -85,6 +85,20 @@ git show tenant-multi@{1}:middleware.ts         # example; adjust ref to your ba
 ```
 
 If you did not create a backup branch, use **`git reflog`** or **`origin/tenant-multi`** on GitHub (still has old commits until overwritten) to recover files.
+
+## Postgres RPCs and tenant safety (merge hotspots)
+
+Re-check after **upstream merges** or new RPCs:
+
+| RPC / path | Tenant handling |
+|------------|-----------------|
+| `get_top_items_per_collection` | **Not tenant-filtered** in SQL. When `resolveEffectiveTenantId()` is set, [`collectionItemRepository`](lib/repositories/collectionItemRepository.ts) **skips** this RPC and uses a manual `collection_items` query with `applyTenantEq(..., tenantId)`. |
+| `exec_sql` | Used by [`executeSql`](lib/supabase-server.ts) — **setup / admin** only; not per-tenant builder traffic. |
+| `increment_webhook_failure_count`, `increment` | [`webhookRepository`](lib/repositories/webhookRepository.ts) — scope webhooks themselves if multi-tenant; RPCs operate on a single row id. |
+
+Optional hardening: add `p_tenant_id` to `get_top_items_per_collection` and filter inside the function, or add `tenant_id` to `collection_imports` to avoid N+1 collection checks.
+
+Fork helpers (keep when merging upstream): `lib/masjidweb/apply-tenant-eq.ts`, `tenant-query.ts`, `tenant-session-alignment.ts` (proxy JWT vs header), `supabase-builder-session.ts` (future RLS client), `npm test` (Vitest).
 
 ## After you are done bisecting
 

@@ -1,10 +1,12 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import type { User } from '@supabase/supabase-js';
 import {
   requestHostname,
   supabaseCookieOptionsForRequestHeaders,
 } from '@/lib/supabase-cookie-domain';
+import { tenantJwtHeaderMismatchReason } from '@/lib/masjidweb/tenant-session-alignment';
 import {
   extractSubdomain,
   getSupabaseEnvConfig,
@@ -20,19 +22,23 @@ const MASTER_BUILDER_SUBDOMAIN = (
   process.env.MASTER_BUILDER_SUBDOMAIN || 'manage'
 ).toLowerCase();
 
+type ApiAuthResult =
+  | { kind: 'public' }
+  | { kind: 'unauthenticated'; response: NextResponse }
+  | { kind: 'authenticated'; user: User };
+
 /**
- * Verify Supabase session for protected API routes.
- * Returns a 401 response if not authenticated, or null to continue.
+ * Verify Supabase session for protected API / preview routes.
  */
-async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null> {
+async function verifyApiAuth(request: NextRequest): Promise<ApiAuthResult> {
   if (isPublicApiRoute(request.nextUrl.pathname, request.method)) {
-    return null;
+    return { kind: 'public' };
   }
 
   const config = getSupabaseEnvConfig();
 
   // If env vars aren't set (pre-setup or local dev without .env.local), let through
-  if (!config) return null;
+  if (!config) return { kind: 'public' };
 
   let response = NextResponse.next({ request });
 
@@ -61,13 +67,13 @@ async function verifyApiAuth(request: NextRequest): Promise<NextResponse | null>
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 },
-    );
+    return {
+      kind: 'unauthenticated',
+      response: NextResponse.json({ error: 'Not authenticated' }, { status: 401 }),
+    };
   }
 
-  return null;
+  return { kind: 'authenticated', user };
 }
 
 export async function proxy(request: NextRequest) {
@@ -159,15 +165,24 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Protect API and preview routes with auth
+  // Protect API and preview routes with auth + tenant / JWT alignment
   if (pathname.startsWith('/ycode/api') || pathname.startsWith('/ycode/preview')) {
     if (!isProvisionPublish) {
-      const authResponse = await verifyApiAuth(request);
-      if (authResponse) {
+      const auth = await verifyApiAuth(request);
+      if (auth.kind === 'unauthenticated') {
         if (pathname.startsWith('/ycode/preview')) {
           return NextResponse.redirect(new URL('/ycode', request.url));
         }
-        return authResponse;
+        return auth.response;
+      }
+      if (auth.kind === 'authenticated' && pathname.startsWith('/ycode/api')) {
+        const headerTid = request.headers.get('x-tenant-id');
+        if (tenantJwtHeaderMismatchReason(headerTid, auth.user)) {
+          return NextResponse.json(
+            { error: 'Tenant mismatch between session and site' },
+            { status: 403 },
+          );
+        }
       }
     }
   }
