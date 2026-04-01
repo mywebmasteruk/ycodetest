@@ -5,6 +5,49 @@ import { generatePageLayersHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
 import { extractLayerContentMap } from '../localisation-utils';
 
+function parsePageLayerTime(iso?: string | null): number {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** When multiple draft rows exist for the same page, keep the newest by updated_at (then created_at). */
+function dedupeLatestDraftPerPage(rows: PageLayers[]): PageLayers[] {
+  const byPage = new Map<string, PageLayers>();
+  for (const row of rows) {
+    const prev = byPage.get(row.page_id);
+    if (!prev) {
+      byPage.set(row.page_id, row);
+      continue;
+    }
+    const rowU = parsePageLayerTime(row.updated_at);
+    const prevU = parsePageLayerTime(prev.updated_at);
+    if (rowU > prevU) {
+      byPage.set(row.page_id, row);
+      continue;
+    }
+    if (rowU < prevU) continue;
+    const rowC = parsePageLayerTime(row.created_at);
+    const prevC = parsePageLayerTime(prev.created_at);
+    if (rowC > prevC) {
+      byPage.set(row.page_id, row);
+    }
+  }
+  return [...byPage.values()];
+}
+
+/**
+ * Copy draft layers to published when missing, hash/timestamp differs, or layer JSON differs
+ * (avoids stale published HTML when content_hash is wrong or races occur).
+ */
+function shouldCopyDraftToPublished(draft: PageLayers, existing: PageLayers | undefined): boolean {
+  if (!existing) return true;
+  if ((existing.content_hash ?? '') !== (draft.content_hash ?? '')) return true;
+  if (parsePageLayerTime(draft.updated_at) > parsePageLayerTime(existing.updated_at)) return true;
+  if (JSON.stringify(draft.layers) !== JSON.stringify(existing.layers)) return true;
+  return false;
+}
+
 /**
  * Get layers by page_id with optional is_published filter
  */
@@ -52,6 +95,8 @@ export async function getLayersByPageId(
 
 /**
  * Get draft layers for a page
+ * Uses the same per-page dedupe as getDraftLayersForPages so publish and upsert
+ * always target the latest draft row when duplicate draft rows exist for one page.
  */
 export async function getDraftLayers(pageId: string): Promise<PageLayers | null> {
   const client = await getSupabaseAdmin();
@@ -68,23 +113,25 @@ export async function getDraftLayers(pageId: string): Promise<PageLayers | null>
     .eq('page_id', pageId)
     .eq('is_published', false)
     .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
   if (tenantId) {
     q = q.eq('tenant_id', tenantId);
   }
 
-  const { data, error } = await q.single();
+  const { data, error } = await q;
 
   if (error) {
-    if (error.code === 'PGRST116') {
-      return null; // Not found
-    }
     throw new Error(`Failed to fetch draft: ${error.message}`);
   }
 
-  return data;
+  const rows = data || [];
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const deduped = dedupeLatestDraftPerPage(rows);
+  return deduped[0] ?? null;
 }
 
 /**
@@ -264,7 +311,7 @@ export async function getAllDraftLayers(): Promise<PageLayers[]> {
     throw new Error(`Failed to fetch draft layers: ${error.message}`);
   }
 
-  return data || [];
+  return dedupeLatestDraftPerPage(data || []);
 }
 
 /**
@@ -302,7 +349,7 @@ export async function getDraftLayersForPages(pageIds: string[]): Promise<PageLay
     throw new Error(`Failed to fetch draft layers: ${error.message}`);
   }
 
-  return data || [];
+  return dedupeLatestDraftPerPage(data || []);
 }
 
 /**
@@ -406,38 +453,35 @@ export async function publishPageLayers(draftPageId: string, publishedPageId: st
   const existingPublished = await getPublishedLayersById(draftLayers.id);
 
   if (existingPublished) {
-    // Update existing published version only if content_hash changed
-    const hasChanges = existingPublished.content_hash !== draftLayers.content_hash;
-
-    if (hasChanges) {
-      // Prepare update data WITHOUT primary key fields (id, is_published)
-      const updateData: any = {
-        page_id: publishedPageId, // Same page ID (draft and published pages share same id)
-        layers: draftLayers.layers,
-        content_hash: draftLayers.content_hash, // Copy hash from draft
-        updated_at: new Date().toISOString(),
-      };
-
-      let pubUpd = client
-        .from('page_layers')
-        .update(updateData)
-        .eq('id', existingPublished.id)
-        .eq('is_published', true);
-
-      if (tenantId) {
-        pubUpd = pubUpd.eq('tenant_id', tenantId);
-      }
-
-      const { data, error } = await pubUpd.select().single();
-
-      if (error) {
-        throw new Error(`Failed to update published layers: ${error.message}`);
-      }
-
-      return data;
+    if (!shouldCopyDraftToPublished(draftLayers, existingPublished)) {
+      return existingPublished;
     }
 
-    return existingPublished;
+    // Prepare update data WITHOUT primary key fields (id, is_published)
+    const updateData: any = {
+      page_id: publishedPageId, // Same page ID (draft and published pages share same id)
+      layers: draftLayers.layers,
+      content_hash: draftLayers.content_hash, // Copy hash from draft
+      updated_at: new Date().toISOString(),
+    };
+
+    let pubUpd = client
+      .from('page_layers')
+      .update(updateData)
+      .eq('id', existingPublished.id)
+      .eq('is_published', true);
+
+    if (tenantId) {
+      pubUpd = pubUpd.eq('tenant_id', tenantId);
+    }
+
+    const { data, error } = await pubUpd.select().single();
+
+    if (error) {
+      throw new Error(`Failed to update published layers: ${error.message}`);
+    }
+
+    return data;
   } else {
     // Create new published version - include ALL fields for insert
     const rowTid =
@@ -490,17 +534,11 @@ export async function batchPublishPageLayers(pageIds: string[]): Promise<number>
 
   const tenantId = await resolveEffectiveTenantId();
 
-  // Step 1: Batch fetch all draft layers
+  // Step 1: Batch fetch all draft layers (deduped per page inside getDraftLayersForPages)
   const draftLayers = await getDraftLayersForPages(pageIds);
 
   if (draftLayers.length === 0) {
     return 0;
-  }
-
-  // Build map for quick lookup
-  const draftLayersById = new Map<string, PageLayers>();
-  for (const draft of draftLayers) {
-    draftLayersById.set(draft.id, draft);
   }
 
   // Step 2: Batch fetch existing published layers
@@ -519,8 +557,7 @@ export async function batchPublishPageLayers(pageIds: string[]): Promise<number>
   for (const draft of draftLayers) {
     const existing = publishedById.get(draft.id);
 
-    // Only include if new or content_hash changed
-    if (!existing || existing.content_hash !== draft.content_hash) {
+    if (shouldCopyDraftToPublished(draft, existing)) {
       const row: Record<string, unknown> = {
         id: draft.id,
         page_id: draft.page_id,

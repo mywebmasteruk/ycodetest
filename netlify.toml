@@ -2,5 +2,12 @@
   command = "npm run build"
   publish = ".next"
 
+# Next.js 16 requires Node >= 20.9.0; Netlify’s default image may still use 18.x,
+# which fails immediately with "Node.js version >=20.9.0 is required".
+[build.environment]
+  NODE_VERSION = "20"
+  # Skip husky in CI (no .git hooks needed on Netlify; avoids noisy warnings).
+  HUSKY = "0"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
