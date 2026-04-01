@@ -1,6 +1,6 @@
-# Your Netlify site **masjidweb-multi** is already connected to this GitHub repo
-# on branch **single-site**. Netlify builds and deploys on every push — no tokens
-# or secrets are required in GitHub for that.
+# Netlify site(s) for this repo (e.g. **masjidweb-multi**) should be linked to this
+# GitHub repo on branch **tenant-multi**. Netlify builds on every push — no tokens
+# or secrets are required in GitHub for that path.
 #
 # - On push: Netlify builds from Git (no secret needed).
 # - On “Run workflow” (manual): optionally POSTs NETLIFY_BUILD_HOOK_URL to start
@@ -10,7 +10,7 @@ name: Netlify deploy (via Netlify Git integration)
 
 on:
   push:
-    branches: [single-site, tenant-multi]
+    branches: [tenant-multi]
   workflow_dispatch:
 
 concurrency:
