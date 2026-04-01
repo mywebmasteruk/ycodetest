@@ -10,7 +10,13 @@ import { revalidateTag, revalidatePath } from 'next/cache';
  *      revalidatePath alone does NOT propagate to the Edge CDN on Netlify.
  */
 
-function netlifyPurgeCredentials(): { token: string | undefined; siteId: string | undefined } {
+const ALL_PAGES_CACHE_TAG = 'all-pages';
+
+function netlifyPurgeCredentials(): {
+  token: string | undefined;
+  siteId: string | undefined;
+  siteSlug: string | undefined;
+  } {
   const token =
     process.env.NETLIFY_PURGE_API_TOKEN?.trim() ||
     process.env.NETLIFY_TOKEN?.trim() ||
@@ -18,29 +24,94 @@ function netlifyPurgeCredentials(): { token: string | undefined; siteId: string 
   const siteId =
     process.env.NETLIFY_SITE_ID?.trim() ||
     process.env.SITE_ID?.trim();
-  return { token, siteId };
+  const siteSlug = process.env.SITE_NAME?.trim();
+  return { token, siteId, siteSlug };
 }
 
 export async function purgeNetlifyEdgeCache(): Promise<{ method: string; ok: boolean; error?: string }> {
   const diagnostics: string[] = [];
-  const { token, siteId } = netlifyPurgeCredentials();
+  const { token, siteId, siteSlug } = netlifyPurgeCredentials();
   diagnostics.push(
-    `env: purge_token=${token ? 'set' : 'missing'}, site_id=${siteId || 'missing'}`,
+    `env: purge_token=${token ? 'set' : 'missing'}, site_id=${siteId || 'missing'}, site_name=${siteSlug || 'missing'}`,
   );
 
-  // purgeCache() without options throws unless NETLIFY_PURGE_API_TOKEN exists — pass token explicitly.
-  if (token && siteId) {
+  if (!token) {
+    const msg =
+      'no purge token (set NETLIFY_PURGE_API_TOKEN for instant CDN purge; public pages use short s-maxage as fallback)';
+    diagnostics.push(msg);
+    console.warn(`⚠️ [Cache] ${msg}`);
+    return { method: 'none', ok: false, error: diagnostics.join(' | ') };
+  }
+
+  const { purgeCache } = await import('@netlify/functions');
+
+  const attempts: Array<{ label: string; run: () => Promise<void> }> = [];
+
+  if (siteId) {
+    attempts.push({
+      label: 'purgeCache-tags+siteID',
+      run: () =>
+        purgeCache({
+          token,
+          siteID: siteId,
+          tags: [ALL_PAGES_CACHE_TAG],
+        }),
+    });
+    attempts.push({
+      label: 'purgeCache-siteID',
+      run: () => purgeCache({ token, siteID: siteId }),
+    });
+  }
+
+  if (siteSlug) {
+    attempts.push({
+      label: 'purgeCache-tags+siteSlug',
+      run: () =>
+        purgeCache({
+          token,
+          siteSlug,
+          tags: [ALL_PAGES_CACHE_TAG],
+        }),
+    });
+    attempts.push({
+      label: 'purgeCache-siteSlug',
+      run: () => purgeCache({ token, siteSlug }),
+    });
+  }
+
+  for (const { label, run } of attempts) {
     try {
-      const { purgeCache } = await import('@netlify/functions');
-      await purgeCache({ token, siteID: siteId });
-      console.log('✅ [Cache] Netlify edge purged via purgeCache({ token, siteID })');
-      return { method: 'purgeCache', ok: true };
+      await run();
+      console.log(`✅ [Cache] Netlify edge purged via ${label}`);
+      return { method: label, ok: true };
     } catch (err) {
-      diagnostics.push(`purgeCache: ${err}`);
+      diagnostics.push(`${label}: ${err}`);
     }
   }
 
-  if (token && siteId) {
+  if (siteId) {
+    try {
+      const res = await fetch('https://api.netlify.com/api/v1/purge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          site_id: siteId,
+          cache_tags: [ALL_PAGES_CACHE_TAG],
+        }),
+      });
+      if (res.ok) {
+        console.log('✅ [Cache] Netlify edge purged via REST API (cache_tags)');
+        return { method: 'rest-api-tags', ok: true };
+      }
+      const text = await res.text().catch(() => '');
+      diagnostics.push(`REST tags: ${res.status} ${text}`);
+    } catch (err) {
+      diagnostics.push(`REST tags fetch: ${err}`);
+    }
+
     try {
       const res = await fetch('https://api.netlify.com/api/v1/purge', {
         method: 'POST',
@@ -51,13 +122,13 @@ export async function purgeNetlifyEdgeCache(): Promise<{ method: string; ok: boo
         body: JSON.stringify({ site_id: siteId }),
       });
       if (res.ok) {
-        console.log('✅ [Cache] Netlify edge purged via REST API');
-        return { method: 'rest-api', ok: true };
+        console.log('✅ [Cache] Netlify edge purged via REST API (site)');
+        return { method: 'rest-api-site', ok: true };
       }
       const text = await res.text().catch(() => '');
-      diagnostics.push(`REST API: ${res.status} ${text}`);
+      diagnostics.push(`REST site: ${res.status} ${text}`);
     } catch (err) {
-      diagnostics.push(`REST API fetch: ${err}`);
+      diagnostics.push(`REST site fetch: ${err}`);
     }
   }
 

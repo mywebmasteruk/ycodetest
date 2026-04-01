@@ -62,9 +62,11 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: 'Cache-Control',
-            // Cache until re-published: CDN caches for up to 1 year
-            // On publish, revalidatePath purges CDN; revalidateTag purges data cache
-            value: 'public, s-maxage=31536000, stale-while-revalidate=31536000',
+            // Short CDN TTL so visitors see publishes within minutes even if edge purge
+            // fails (missing NETLIFY_PURGE_API_TOKEN). On publish, clearAllCache() still
+            // revalidates Next data cache + calls purgeCache(Netlify-Cache-Tag: all-pages).
+            value:
+              'public, max-age=0, s-maxage=120, stale-while-revalidate=86400',
           },
         ],
       },

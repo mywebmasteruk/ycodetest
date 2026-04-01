@@ -196,12 +196,18 @@ export async function proxy(request: NextRequest) {
 
     const rewriteResponse = NextResponse.rewrite(rewriteUrl, { request });
     rewriteResponse.headers.set('x-pathname', pathname);
+    if (!pathname.startsWith('/a/')) {
+      rewriteResponse.headers.set('Netlify-Cache-Tag', 'all-pages');
+    }
     return rewriteResponse;
   }
 
   const response = NextResponse.next({ request });
 
   response.headers.set('x-pathname', pathname);
+  if (isPublicPage(pathname) && !pathname.startsWith('/a/')) {
+    response.headers.set('Netlify-Cache-Tag', 'all-pages');
+  }
 
   return response;
 }
