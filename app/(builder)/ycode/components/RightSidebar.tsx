@@ -1690,21 +1690,27 @@ const RightSidebar = React.memo(function RightSidebar({
         <hr className="mt-4" />
 
         {/* Design tab */}
-        <TabsContent value="design" className="flex-1 flex flex-col divide-y overflow-y-auto no-scrollbar data-[state=inactive]:hidden overflow-x-hidden mt-0">
+        <TabsContent value="design" className="flex-1 flex flex-col divide-y data-[state=inactive]:hidden mt-0 overflow-hidden">
 
-          {/* Layer Styles Panel - hide in text style mode except for richText sublayers */}
-          {(!showTextStyleControls || (selectedLayer && isRichTextLayer(selectedLayer))) && (
-            <LayerStylesPanel
-              layer={selectedLayer}
-              pageId={currentPageId}
-              onLayerUpdate={handleLayerUpdate}
-              activeTextStyleKey={selectedLayer && isRichTextLayer(selectedLayer) ? activeTextStyleKey : null}
-            />
-          )}
+          <div className="flex flex-col divide-y">
 
-          {activeTab === 'design' && (
-            <UIStateSelector selectedLayer={selectedLayer} />
-          )}
+            {/* Layer Styles Panel - hide in text style mode except for richText sublayers */}
+            {(!showTextStyleControls || (selectedLayer && isRichTextLayer(selectedLayer))) && (
+              <LayerStylesPanel
+                layer={selectedLayer}
+                pageId={currentPageId}
+                onLayerUpdate={handleLayerUpdate}
+                activeTextStyleKey={selectedLayer && isRichTextLayer(selectedLayer) ? activeTextStyleKey : null}
+              />
+            )}
+
+            {activeTab === 'design' && (
+              <UIStateSelector selectedLayer={selectedLayer} />
+            )}
+
+          </div>
+
+          <div className="overflow-y-auto no-scrollbar overflow-x-hidden divide-y ">
 
           {shouldShowControl('layout', selectedLayer) && !showTextStyleControls && (
             <LayoutControls layer={selectedLayer} onLayerUpdate={handleLayerUpdate} />
@@ -1836,6 +1842,9 @@ const RightSidebar = React.memo(function RightSidebar({
               )}
             </div>
           </SettingsPanel>
+
+          </div>
+
         </TabsContent>
 
         <TabsContent value="settings" className="flex-1 overflow-y-auto no-scrollbar mt-0 data-[state=inactive]:hidden">
