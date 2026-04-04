@@ -5,6 +5,7 @@ import PageRenderer from '@/components/PageRenderer';
 import PasswordForm from '@/components/PasswordForm';
 import { generatePageMetadata, fetchGlobalPageSettings } from '@/lib/generate-page-metadata';
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { Metadata } from 'next';
 
 // Static by default for performance, dynamic only when pagination is requested
@@ -213,13 +214,22 @@ export async function generateMetadata(): Promise<Metadata> {
     }
   }
 
-  return unstable_cache(
-    async () => generatePageMetadata(data.page, {
-      fallbackTitle: 'Home',
-      pagePath: '/',
-      globalSeoSettings: globalSettings,
+  const { meta, baseUrl } = await unstable_cache(
+    async () => ({
+      meta: await generatePageMetadata(data.page, {
+        fallbackTitle: 'Home',
+        pagePath: '/',
+        globalSeoSettings: globalSettings,
+      }),
+      baseUrl: getSiteBaseUrl({ globalCanonicalUrl: globalSettings.globalCanonicalUrl }),
     }),
     ['data-for-route-/-meta'],
     { tags: ['all-pages', 'route-/'], revalidate: false }
   )();
+
+  if (baseUrl) {
+    try { meta.metadataBase = new URL(baseUrl); } catch { /* invalid URL */ }
+  }
+
+  return meta;
 }

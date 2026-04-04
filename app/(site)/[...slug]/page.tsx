@@ -9,6 +9,7 @@ import PageRenderer from '@/components/PageRenderer';
 import PasswordForm from '@/components/PasswordForm';
 import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { Page, PageFolder, Translation, Redirect as RedirectType } from '@/types';
 
 // Static by default for performance, dynamic only when pagination is requested
@@ -394,14 +395,23 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     }
   }
 
-  return unstable_cache(
-    async () => generatePageMetadata(data.page, {
-      fallbackTitle: slugPath.charAt(0).toUpperCase() + slugPath.slice(1),
-      collectionItem: data.collectionItem,
-      pagePath: '/' + slugPath,
-      globalSeoSettings: globalSettings,
+  const { meta, baseUrl } = await unstable_cache(
+    async () => ({
+      meta: await generatePageMetadata(data.page, {
+        fallbackTitle: slugPath.charAt(0).toUpperCase() + slugPath.slice(1),
+        collectionItem: data.collectionItem,
+        pagePath: '/' + slugPath,
+        globalSeoSettings: globalSettings,
+      }),
+      baseUrl: getSiteBaseUrl({ globalCanonicalUrl: globalSettings.globalCanonicalUrl }),
     }),
     [`data-for-route-/${slugPath}-meta`],
     { tags: ['all-pages', `route-/${slugPath}`], revalidate: false }
   )();
+
+  if (baseUrl) {
+    try { meta.metadataBase = new URL(baseUrl); } catch { /* invalid URL */ }
+  }
+
+  return meta;
 }
