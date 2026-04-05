@@ -105,7 +105,9 @@ export async function proxy(request: NextRequest) {
         request.headers.set('x-tenant-id', masterId);
         request.headers.set('x-tenant-slug', MASTER_BUILDER_SUBDOMAIN);
       } else {
-        const tenant = await lookupTenant(subdomain, isProvisionPublish);
+        const tenant = await lookupTenant(subdomain, {
+          bypassCache: isProvisionPublish,
+        });
         if (!tenant) {
           return new NextResponse(
             'Master builder: set TEMPLATE_TENANT_ID (template tenant UUID) or add an active tenant_registry row for the demo slug (e.g. masjidemo1).',
@@ -116,7 +118,9 @@ export async function proxy(request: NextRequest) {
         request.headers.set('x-tenant-slug', tenant.slug);
       }
     } else {
-      const tenant = await lookupTenant(subdomain, isProvisionPublish);
+      const tenant = await lookupTenant(subdomain, {
+        bypassCache: isProvisionPublish,
+      });
       if (!tenant) {
         return new NextResponse('Tenant not found', { status: 404 });
       }
@@ -130,7 +134,9 @@ export async function proxy(request: NextRequest) {
         { status: 400 },
       );
     }
-    const tenant = await lookupTenant(provisionTenantSlug, true);
+    const tenant = await lookupTenant(provisionTenantSlug, {
+      bypassCache: true,
+    });
     if (!tenant) {
       return NextResponse.json(
         { error: `Tenant not found for slug: ${provisionTenantSlug}` },
