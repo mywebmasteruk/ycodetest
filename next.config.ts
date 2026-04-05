@@ -61,11 +61,12 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: 'Cache-Control',
-            // Short CDN TTL so visitors see publishes within minutes even if edge purge
-            // fails (missing NETLIFY_PURGE_API_TOKEN). On publish, clearAllCache() still
-            // revalidates Next data cache + calls purgeCache(Netlify-Cache-Tag: all-pages).
+            // Short CDN TTL; stale-while-revalidate must stay 0 — a long SWR (e.g. 86400)
+            // lets the edge keep serving old HTML for hours after publish while
+            // "revalidating", which matches "many refreshes before I see changes".
+            // Per-tenant Netlify-Cache-Tag + purge on publish (see proxy.ts, cacheService.ts).
             value:
-              'public, max-age=0, s-maxage=120, stale-while-revalidate=86400',
+              'public, max-age=0, s-maxage=120, stale-while-revalidate=0, must-revalidate',
           },
         ],
       },

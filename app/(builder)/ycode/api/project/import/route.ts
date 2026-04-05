@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { noCache } from '@/lib/api-response';
 import { importProject, unpackImport } from '@/lib/services/projectService';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 import { ToastError } from '@/lib/toast-error';
 
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
       return noCache({ error: result.error }, 500);
     }
 
-    await clearAllCache();
+    await clearAllCache(await resolveEffectiveTenantId());
 
     return noCache({
       success: true,

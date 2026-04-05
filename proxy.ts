@@ -14,6 +14,7 @@ import {
   isPublicPage,
 } from '@/lib/tenant';
 import { lookupTenant } from '@/lib/tenant/tenant-registry-lookup';
+import { tenantAllPagesTag } from '@/lib/masjidweb/tenant-cache-tags';
 
 const TENANT_DOMAIN_SUFFIX = process.env.TENANT_DOMAIN_SUFFIX || '';
 
@@ -204,14 +205,31 @@ export async function proxy(request: NextRequest) {
 
     const rewriteResponse = NextResponse.rewrite(rewriteUrl, { request });
     rewriteResponse.headers.set('x-pathname', pathname);
+    attachTenantNetlifyCacheTag(rewriteResponse, request, pathname);
     return rewriteResponse;
   }
 
   const response = NextResponse.next({ request });
 
   response.headers.set('x-pathname', pathname);
+  attachTenantNetlifyCacheTag(response, request, pathname);
 
   return response;
+}
+
+/**
+ * Netlify edge caches HTML per URL; tag by tenant so purgeCache({ tags }) on publish
+ * only drops that hostname's pages, not every tenant on this deploy.
+ */
+function attachTenantNetlifyCacheTag(
+  response: NextResponse,
+  request: NextRequest,
+  pathname: string,
+): void {
+  if (!isPublicPage(pathname)) return;
+  const tid = request.headers.get('x-tenant-id')?.trim();
+  if (!tid) return;
+  response.headers.set('Netlify-Cache-Tag', tenantAllPagesTag(tid));
 }
 
 export const config = {

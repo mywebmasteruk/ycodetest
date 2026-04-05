@@ -24,7 +24,8 @@ describe('purgeNetlifyEdgeCache', () => {
   ] as const;
 
   beforeEach(() => {
-    purgeCacheMock.mockClear();
+    purgeCacheMock.mockReset();
+    purgeCacheMock.mockResolvedValue(undefined);
     for (const k of envKeys) {
       delete process.env[k];
     }
@@ -54,6 +55,35 @@ describe('purgeNetlifyEdgeCache', () => {
       siteID: '11111111-2222-3333-4444-555555555555',
       tags: ['all-pages'],
     });
+  });
+
+  it('uses tenant-scoped cache tag when publisherTenantId is set', async () => {
+    process.env.NETLIFY_PURGE_API_TOKEN = 'test-token';
+    process.env.SITE_ID = '11111111-2222-3333-4444-555555555555';
+    const tenantId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const r = await purgeNetlifyEdgeCache(tenantId);
+    expect(r.ok).toBe(true);
+    expect(purgeCacheMock).toHaveBeenCalledWith({
+      token: 'test-token',
+      siteID: '11111111-2222-3333-4444-555555555555',
+      tags: ['tenant-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-all-pages'],
+    });
+  });
+
+  it('never calls full-site purge when tenant id is set (multi-tenant safety)', async () => {
+    process.env.NETLIFY_PURGE_API_TOKEN = 'test-token';
+    process.env.SITE_ID = '11111111-2222-3333-4444-555555555555';
+    process.env.SITE_NAME = 'my-site-slug';
+    purgeCacheMock.mockRejectedValue(new Error('netlify API down'));
+    const r = await purgeNetlifyEdgeCache('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(r.ok).toBe(false);
+    for (const [arg] of purgeCacheMock.mock.calls) {
+      expect(arg).toEqual(
+        expect.objectContaining({
+          tags: ['tenant-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-all-pages'],
+        }),
+      );
+    }
   });
 
   it('falls back to siteSlug when SITE_ID is missing', async () => {

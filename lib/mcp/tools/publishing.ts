@@ -13,6 +13,7 @@ import { publishLocalisation } from '@/lib/services/localisationService';
 import { publishFolders } from '@/lib/services/folderService';
 import { publishCSS, savePublishedAt } from '@/lib/services/settingsService';
 import { generateAndSaveDraftCSS } from '@/lib/server/cssGenerator';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 
 export function registerPublishingTools(server: McpServer) {
@@ -152,8 +153,10 @@ export function registerPublishingTools(server: McpServer) {
         await publishCSS();
       } catch { /* non-fatal */ }
 
-      // Clear cache
-      try { await clearAllCache(); } catch { /* non-fatal */ }
+      // Clear cache (tenant-scoped when request/session supplies x-tenant-id)
+      try {
+        await clearAllCache(await resolveEffectiveTenantId());
+      } catch { /* non-fatal */ }
 
       // Save published_at timestamp
       try { await savePublishedAt(publishedAt); } catch { /* non-fatal */ }

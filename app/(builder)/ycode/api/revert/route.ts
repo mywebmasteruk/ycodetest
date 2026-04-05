@@ -3,6 +3,7 @@ import { noCache } from '@/lib/api-response';
 import { syncTableRows, cleanupOrphanedRows } from '@/lib/sync-utils';
 import { cleanupOrphanedStorageFiles } from '@/lib/storage-utils';
 import { syncCSS } from '@/lib/services/settingsService';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import type { PublishStats, PublishTableStats } from '@/types';
@@ -301,7 +302,7 @@ export async function POST(_request: NextRequest) {
 
     // Clear cache
     try {
-      await clearAllCache();
+      await clearAllCache(await resolveEffectiveTenantId());
     } catch {
       // Non-fatal
     }

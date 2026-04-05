@@ -8,6 +8,7 @@ import {
 } from '@/lib/repositories/collectionItemRepository';
 import { getCollectionById } from '@/lib/repositories/collectionRepository';
 import type { StatusAction } from '@/lib/collection-field-utils';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 import { noCache } from '@/lib/api-response';
 
@@ -48,18 +49,18 @@ export async function PUT(
     switch (action) {
       case 'draft':
         await unpublishSingleItem(itemId);
-        await clearAllCache();
+        await clearAllCache(await resolveEffectiveTenantId());
         break;
 
       case 'stage': {
         const hadPublished = await stageSingleItem(itemId);
-        if (hadPublished) await clearAllCache();
+        if (hadPublished) await clearAllCache(await resolveEffectiveTenantId());
         break;
       }
 
       case 'publish':
         await publishSingleItem(itemId);
-        await clearAllCache();
+        await clearAllCache(await resolveEffectiveTenantId());
         break;
     }
 

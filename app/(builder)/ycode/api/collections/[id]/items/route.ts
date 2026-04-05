@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getItemsWithValues, createItem, getItemWithValues, getMaxIdValue, enrichItemsWithStatus, enrichSingleItemWithStatus, publishSingleItem, unpublishSingleItem } from '@/lib/repositories/collectionItemRepository';
 import { getCollectionById } from '@/lib/repositories/collectionRepository';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 import { setValuesByFieldName } from '@/lib/repositories/collectionItemValueRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
@@ -270,7 +271,7 @@ export async function POST(
     const action = status_action as StatusAction | undefined;
     if (action === 'draft') {
       await unpublishSingleItem(item.id);
-      await clearAllCache();
+      await clearAllCache(await resolveEffectiveTenantId());
     } else if (action === 'stage') {
       // New items are already staged (is_publishable defaults to true)
     } else if (action === 'publish') {
@@ -282,7 +283,7 @@ export async function POST(
         );
       }
       await publishSingleItem(item.id);
-      await clearAllCache();
+      await clearAllCache(await resolveEffectiveTenantId());
     }
 
     // Get item with values and enrich with status

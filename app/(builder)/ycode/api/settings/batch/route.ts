@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { setSettings } from '@/lib/repositories/settingsRepository';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 
 /**
@@ -23,7 +24,7 @@ export async function PUT(request: NextRequest) {
 
     const count = await setSettings(settings);
 
-    await clearAllCache();
+    await clearAllCache(await resolveEffectiveTenantId());
 
     return NextResponse.json({
       data: { count },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSettingByKey, setSetting } from '@/lib/repositories/settingsRepository';
+import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { clearAllCache } from '@/lib/services/cacheService';
 
 /**
@@ -55,7 +56,7 @@ export async function PUT(
 
     await setSetting(key, value);
 
-    await clearAllCache();
+    await clearAllCache(await resolveEffectiveTenantId());
 
     return NextResponse.json({
       data: { key, value },

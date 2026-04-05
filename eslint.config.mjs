@@ -9,7 +9,17 @@ import nextPlugin from '@next/eslint-plugin-next';
 const ignoresConfig = defineConfig([
   {
     name: 'project/ignores',
-    ignores: ['.next/', 'node_modules/', 'public/', '.vscode/', 'out/', 'build/'],
+    ignores: [
+      '.next/',
+      'node_modules/',
+      'public/',
+      '.vscode/',
+      'out/',
+      'build/',
+      // Excluded from tsconfig.json; projectService cannot parse them
+      '**/*.test.ts',
+      '**/*.test.tsx',
+    ],
   },
 ]);
 
