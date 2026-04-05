@@ -33,7 +33,7 @@ const PUBLIC_API_PREFIXES = [
 
 const PUBLIC_COLLECTION_ITEM_SUFFIXES = ['/items/filter', '/items/load-more'];
 
-const PUBLIC_API_EXACT = ['/ycode/api/revalidate'];
+const PUBLIC_API_EXACT = ['/ycode/api/revalidate', '/ycode/api/health'];
 
 /**
  * Determine whether an API route is public (skips auth).
