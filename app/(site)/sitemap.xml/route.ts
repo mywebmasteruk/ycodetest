@@ -11,7 +11,7 @@ import { getAllPages } from '@/lib/repositories/pageRepository';
 import { getAllPublishedPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { getAllLocales } from '@/lib/repositories/localeRepository';
 import { getTranslationsByLocale } from '@/lib/repositories/translationRepository';
-import { getSettingByKey } from '@/lib/repositories/settingsRepository';
+import { getSettingsByKeys } from '@/lib/repositories/settingsRepository';
 import { getItemsByCollectionId } from '@/lib/repositories/collectionItemRepository';
 import { getValuesByItemIds } from '@/lib/repositories/collectionItemValueRepository';
 import {
@@ -19,30 +19,15 @@ import {
   generateSitemapXml,
   getDefaultSitemapSettings,
 } from '@/lib/sitemap-utils';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { SitemapSettings, Translation, CollectionItem } from '@/types';
-
-/**
- * Get the base URL for sitemap generation
- */
-function getBaseUrl(): string {
-  // Use environment variable if set
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '');
-  }
-
-  // Fallback to Vercel URL
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-
-  return '';
-}
 
 export async function GET() {
   try {
     const hasSupabaseCredentials = await credentials.exists();
     if (!hasSupabaseCredentials) {
       const xml = generateSitemapXml([]);
+
       return new NextResponse(xml, {
         headers: {
           'Content-Type': 'application/xml',
@@ -51,9 +36,9 @@ export async function GET() {
       });
     }
 
-    // Get sitemap settings
-    const storedSettings = await getSettingByKey('sitemap');
-    const settings: SitemapSettings = storedSettings || getDefaultSitemapSettings();
+    const allSettings = await getSettingsByKeys(['sitemap', 'global_canonical_url']);
+    const settings: SitemapSettings = allSettings.sitemap || getDefaultSitemapSettings();
+    const globalCanonicalUrl: string | null = allSettings.global_canonical_url || null;
 
     // If sitemap is disabled, return 404
     if (settings.mode === 'none') {
@@ -71,7 +56,7 @@ export async function GET() {
     }
 
     // Auto-generate sitemap
-    const baseUrl = getBaseUrl();
+    const baseUrl = getSiteBaseUrl({ globalCanonicalUrl }) || '';
 
     // Fetch published pages and folders
     const [pages, folders, locales] = await Promise.all([

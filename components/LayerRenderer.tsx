@@ -124,6 +124,8 @@ interface LayerRendererProps {
   isSlideChild?: boolean;
   /** Server-side settings (for preview/published pages where Zustand store is not available) */
   serverSettings?: Record<string, unknown>;
+  /** When true, the component root layer (layer.id === parentComponentLayerId) renders its own context menu */
+  componentRootContextMenu?: boolean;
 }
 
 const LayerRenderer: React.FC<LayerRendererProps> = ({
@@ -169,6 +171,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
   ancestorComponentIds,
   isSlideChild: isSlideChildProp,
   serverSettings,
+  componentRootContextMenu,
 }) => {
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>('');
@@ -310,6 +313,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
         ancestorComponentIds={ancestorComponentIds}
         isSlideChild={isSlideChildProp}
         serverSettings={serverSettings}
+        componentRootContextMenu={componentRootContextMenu}
       />
     );
   };
@@ -371,6 +375,7 @@ const LayerItem: React.FC<{
   ancestorComponentIds?: Set<string>;
   isSlideChild?: boolean;
   serverSettings?: Record<string, unknown>;
+  componentRootContextMenu?: boolean;
 }> = ({
   layer,
   isEditMode,
@@ -420,6 +425,7 @@ const LayerItem: React.FC<{
   ancestorComponentIds,
   isSlideChild,
   serverSettings,
+  componentRootContextMenu,
 }) => {
   // Subscribe to selection state from the store for reactive updates without
   // forcing the entire LayerRenderer tree to re-render when selection changes
@@ -1570,21 +1576,22 @@ const LayerItem: React.FC<{
         ? resolveVariableLinks(layer.componentOverrides, parentComponentOverrides, parentComponentVariables)
         : layer.componentOverrides;
 
+      const needsRootContextMenu = isEditMode && !!pageId && !isEditing && !parentComponentLayerId;
+
       return (
-        <div className="contents">
-          <LayerRenderer
-            layers={layersWithInstanceId}
-            {...sharedRendererProps}
-            editorHiddenLayerIds={componentEditorHiddenLayerIds}
-            enableDragDrop={enableDragDrop}
-            activeLayerId={activeLayerId}
-            projected={projected}
-            parentComponentLayerId={layer.id}
-            parentComponentOverrides={effectiveOverrides}
-            parentComponentVariables={component?.variables}
-            ancestorComponentIds={effectiveAncestorIds}
-          />
-        </div>
+        <LayerRenderer
+          layers={layersWithInstanceId}
+          {...sharedRendererProps}
+          editorHiddenLayerIds={componentEditorHiddenLayerIds}
+          enableDragDrop={enableDragDrop}
+          activeLayerId={activeLayerId}
+          projected={projected}
+          parentComponentLayerId={layer.id}
+          parentComponentOverrides={effectiveOverrides}
+          parentComponentVariables={component?.variables}
+          ancestorComponentIds={effectiveAncestorIds}
+          componentRootContextMenu={needsRootContextMenu || undefined}
+        />
       );
     }
 
@@ -3011,6 +3018,13 @@ const LayerItem: React.FC<{
     return renderContent();
   }
 
+  // Component instances render without a wrapper element so they participate
+  // directly in the parent's layout (required for divide-* utilities).
+  // The component root handles its own context menu via componentRootContextMenu.
+  if (transformedComponentLayers) {
+    return renderContent();
+  }
+
   // Wrap with context menu in edit mode
   // Don't wrap layers inside component instances (they're not directly editable)
   let content = renderContent();
@@ -3047,7 +3061,8 @@ const LayerItem: React.FC<{
     }
   }
 
-  if (isEditMode && pageId && !isEditing && !parentComponentLayerId) {
+  const isComponentRoot = componentRootContextMenu && parentComponentLayerId && layer.id === parentComponentLayerId;
+  if (isEditMode && pageId && !isEditing && (!parentComponentLayerId || isComponentRoot)) {
     const isLocked = layer.id === 'body';
 
     return (

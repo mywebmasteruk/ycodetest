@@ -17,6 +17,7 @@ import {
   tenantAllPagesTag,
   tenantRouteTag,
 } from '@/lib/masjidweb/tenant-cache-tags';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { Page, PageFolder, Translation, Redirect as RedirectType } from '@/types';
 
 // Avoid ISR full-route caching on Netlify (stale HTML after publish).
@@ -444,12 +445,15 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   }
 
   const { effectiveTid, keySuffix } = await getTenantCacheContext();
-  return unstable_cache(
-    async () => generatePageMetadata(data.page, {
-      fallbackTitle: slugPath.charAt(0).toUpperCase() + slugPath.slice(1),
-      collectionItem: data.collectionItem,
-      pagePath: '/' + slugPath,
-      globalSeoSettings: globalSettings,
+  const { meta, baseUrl } = await unstable_cache(
+    async () => ({
+      meta: await generatePageMetadata(data.page, {
+        fallbackTitle: slugPath.charAt(0).toUpperCase() + slugPath.slice(1),
+        collectionItem: data.collectionItem,
+        pagePath: '/' + slugPath,
+        globalSeoSettings: globalSettings,
+      }),
+      baseUrl: getSiteBaseUrl({ globalCanonicalUrl: globalSettings.globalCanonicalUrl }),
     }),
     [`data-for-route-/${slugPath}-meta`, keySuffix],
     {
@@ -460,4 +464,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
       revalidate: false,
     }
   )();
+
+  if (baseUrl) {
+    try { meta.metadataBase = new URL(baseUrl); } catch { /* invalid URL */ }
+  }
+
+  return meta;
 }

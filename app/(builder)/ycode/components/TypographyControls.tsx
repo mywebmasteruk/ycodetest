@@ -71,6 +71,9 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
   // Detect if underline is active
   const hasUnderline = textDecoration === 'underline';
 
+  // Detect if text transform is active
+  const hasTransform = textTransform !== 'none' && textTransform !== '';
+
   // Custom extractor for letter spacing (strips 'em' as default unit, like fontSize strips 'px')
   const extractLetterSpacingValue = (value: string): string => {
     if (!value) return '';
@@ -207,6 +210,18 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
     ]);
   };
 
+  const handleAddTransform = () => {
+    updateDesignProperty('typography', 'textTransform', 'uppercase');
+  };
+
+  const handleRemoveTransform = () => {
+    updateDesignProperty('typography', 'textTransform', null);
+  };
+
+  const handleTransformChange = (value: string) => {
+    updateDesignProperty('typography', 'textTransform', value);
+  };
+
   // Debounced handler for keyboard-typed hex values
   const handleDecorationColorChange = (value: string) => {
     const sanitized = removeSpaces(value);
@@ -300,6 +315,12 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
                 disabled={hasUnderline}
               >
                 Underline
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleAddTransform}
+                disabled={hasTransform}
+              >
+                Transform
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -580,6 +601,38 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
                 tabIndex={0}
                 className="p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                 onClick={handleRemoveUnderline}
+              >
+                <Icon name="x" className="size-2.5" />
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!isIcon && hasTransform && (
+          <div className="grid grid-cols-3 items-start">
+            <Label variant="muted" className="h-8">Transform</Label>
+            <div className="col-span-2 flex items-center gap-2">
+              <Select
+                value={textTransform}
+                onValueChange={handleTransformChange}
+              >
+                <SelectTrigger className="flex-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="uppercase">Uppercase</SelectItem>
+                    <SelectItem value="lowercase">Lowercase</SelectItem>
+                    <SelectItem value="capitalize">Capitalize</SelectItem>
+                    <SelectItem value="normal-case">Normal</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <span
+                role="button"
+                tabIndex={0}
+                className="p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                onClick={handleRemoveTransform}
               >
                 <Icon name="x" className="size-2.5" />
               </span>

@@ -12,6 +12,7 @@ import {
   tenantAllPagesTag,
   tenantRouteTag,
 } from '@/lib/masjidweb/tenant-cache-tags';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { Metadata } from 'next';
 
 // Avoid ISR full-route caching on Netlify (stale HTML after publish). Data uses
@@ -249,11 +250,14 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   const { effectiveTid, keySuffix } = await getTenantCacheContext();
-  return unstable_cache(
-    async () => generatePageMetadata(data.page, {
-      fallbackTitle: 'Home',
-      pagePath: '/',
-      globalSeoSettings: globalSettings,
+  const { meta, baseUrl } = await unstable_cache(
+    async () => ({
+      meta: await generatePageMetadata(data.page, {
+        fallbackTitle: 'Home',
+        pagePath: '/',
+        globalSeoSettings: globalSettings,
+      }),
+      baseUrl: getSiteBaseUrl({ globalCanonicalUrl: globalSettings.globalCanonicalUrl }),
     }),
     ['data-for-route-/-meta', keySuffix],
     {
@@ -264,4 +268,10 @@ export async function generateMetadata(): Promise<Metadata> {
       revalidate: false,
     }
   )();
+
+  if (baseUrl) {
+    try { meta.metadataBase = new URL(baseUrl); } catch { /* invalid URL */ }
+  }
+
+  return meta;
 }
