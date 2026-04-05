@@ -317,26 +317,26 @@ export async function POST(request: NextRequest) {
       // (propagate draft deletions to published versions)
         try {
           await hardDeleteSoftDeletedPages();
-        } catch {
-        // Non-fatal
+        } catch (e) {
+          console.error('[publish] hardDeleteSoftDeletedPages failed:', e);
         }
 
         try {
           await hardDeleteSoftDeletedComponents();
-        } catch {
-        // Non-fatal
+        } catch (e) {
+          console.error('[publish] hardDeleteSoftDeletedComponents failed:', e);
         }
 
         try {
           await hardDeleteSoftDeletedLayerStyles();
-        } catch {
-        // Non-fatal
+        } catch (e) {
+          console.error('[publish] hardDeleteSoftDeletedLayerStyles failed:', e);
         }
 
         try {
           await cleanupDeletedCollections();
-        } catch {
-        // Non-fatal
+        } catch (e) {
+          console.error('[publish] cleanupDeletedCollections failed:', e);
         }
 
         // Asset folders
@@ -346,8 +346,8 @@ export async function POST(request: NextRequest) {
             const deleteFoldersResult = await hardDeleteSoftDeletedAssetFolders();
             result.changes.assetFoldersDeleted = deleteFoldersResult.count;
             stats.tables.asset_folders.deleted = deleteFoldersResult.count;
-          } catch {
-          // Silently handle - non-fatal
+          } catch (e) {
+            console.error('[publish] hardDeleteSoftDeletedAssetFolders failed:', e);
           }
 
           try {
@@ -358,8 +358,8 @@ export async function POST(request: NextRequest) {
               result.changes.assetFolders = foldersResult.count;
               stats.tables.asset_folders.added = foldersResult.count;
             }
-          } catch {
-          // Silently handle - non-fatal
+          } catch (e) {
+            console.error('[publish] publishAssetFolders failed:', e);
           }
           stats.tables.asset_folders.durationMs = Math.round(performance.now() - stepStart);
         }
@@ -371,8 +371,8 @@ export async function POST(request: NextRequest) {
             const deleteResult = await hardDeleteSoftDeletedAssets();
             result.changes.assetsDeleted = deleteResult.count;
             stats.tables.assets.deleted = deleteResult.count;
-          } catch {
-          // Silently handle - non-fatal
+          } catch (e) {
+            console.error('[publish] hardDeleteSoftDeletedAssets failed:', e);
           }
 
           try {
@@ -383,8 +383,8 @@ export async function POST(request: NextRequest) {
               result.changes.assets = assetsResult.count;
               stats.tables.assets.added = assetsResult.count;
             }
-          } catch {
-          // Silently handle - non-fatal
+          } catch (e) {
+            console.error('[publish] publishAssets failed:', e);
           }
           stats.tables.assets.durationMs = Math.round(performance.now() - stepStart);
         }
@@ -393,8 +393,8 @@ export async function POST(request: NextRequest) {
         {
           try {
             await publishFonts();
-          } catch {
-          // Non-fatal — fonts are best-effort during publish
+          } catch (e) {
+            console.error('[publish] publishFonts failed:', e);
           }
         }
 
@@ -408,8 +408,8 @@ export async function POST(request: NextRequest) {
             stats.tables.locales.durationMs = localisationResult.timing.localesDurationMs;
             stats.tables.translations.added = localisationResult.translations;
             stats.tables.translations.durationMs = localisationResult.timing.translationsDurationMs;
-          } catch {
-          // Silently handle - non-fatal
+          } catch (e) {
+            console.error('[publish] publishLocalisation failed:', e);
           }
         }
       }
@@ -420,8 +420,8 @@ export async function POST(request: NextRequest) {
         try {
           result.changes.css = await publishCSS();
           stats.tables.css.added = result.changes.css ? 1 : 0;
-        } catch {
-        // Don't fail the entire publish if CSS fails
+        } catch (e) {
+          console.error('[publish] publishCSS failed:', e);
         }
         stats.tables.css.durationMs = Math.round(performance.now() - stepStart);
       }

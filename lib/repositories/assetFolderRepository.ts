@@ -300,13 +300,15 @@ export async function reorderFolders(updates: Array<{ id: string; order: number 
   const knex = await getKnexClient();
 
   const extraWhere = tenantId
-    ? `AND is_published = false AND deleted_at IS NULL AND tenant_id = '${tenantId}'`
+    ? 'AND is_published = false AND deleted_at IS NULL AND tenant_id = ?'
     : 'AND is_published = false AND deleted_at IS NULL';
+  const extraParams = tenantId ? [tenantId] : [];
 
   await batchUpdateColumn(knex, 'asset_folders', 'order',
     updates.map(u => ({ id: u.id, value: u.order })),
     {
       extraWhereClause: extraWhere,
+      extraWhereParams: extraParams,
       castType: 'integer',
     }
   );

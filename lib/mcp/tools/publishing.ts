@@ -61,11 +61,13 @@ export function registerPublishingTools(server: McpServer) {
       const publishedAt = new Date().toISOString();
       const changes: Record<string, number> = {};
 
+      const failed: string[] = [];
+
       // Publish folders
       try {
         const foldersResult = await publishFolders([], undefined);
         changes.folders = foldersResult.count;
-      } catch { changes.folders = 0; }
+      } catch (e) { changes.folders = 0; failed.push('folders'); console.error('[publish] folders failed:', e); }
 
       // Publish all draft pages
       try {
@@ -76,7 +78,7 @@ export function registerPublishingTools(server: McpServer) {
         } else {
           changes.pages = 0;
         }
-      } catch { changes.pages = 0; }
+      } catch (e) { changes.pages = 0; failed.push('pages'); console.error('[publish] pages failed:', e); }
 
       // Publish collections with items
       try {
@@ -93,7 +95,7 @@ export function registerPublishingTools(server: McpServer) {
           }
         }
         changes.collection_items = totalItems;
-      } catch { changes.collection_items = 0; }
+      } catch (e) { changes.collection_items = 0; failed.push('collections'); console.error('[publish] collections failed:', e); }
 
       // Publish components
       try {
@@ -104,7 +106,7 @@ export function registerPublishingTools(server: McpServer) {
         } else {
           changes.components = 0;
         }
-      } catch { changes.components = 0; }
+      } catch (e) { changes.components = 0; failed.push('components'); console.error('[publish] components failed:', e); }
 
       // Publish layer styles
       try {
@@ -115,7 +117,7 @@ export function registerPublishingTools(server: McpServer) {
         } else {
           changes.layer_styles = 0;
         }
-      } catch { changes.layer_styles = 0; }
+      } catch (e) { changes.layer_styles = 0; failed.push('layer_styles'); console.error('[publish] layer_styles failed:', e); }
 
       // Publish asset folders
       try {
@@ -125,7 +127,7 @@ export function registerPublishingTools(server: McpServer) {
           const result = await publishAssetFolders(unpublished.map((f: { id: string }) => f.id));
           changes.asset_folders = result.count;
         }
-      } catch { /* non-fatal */ }
+      } catch (e) { failed.push('asset_folders'); console.error('[publish] asset_folders failed:', e); }
 
       // Publish assets
       try {
@@ -135,31 +137,31 @@ export function registerPublishingTools(server: McpServer) {
           const result = await publishAssets(unpublished.map((a: { id: string }) => a.id));
           changes.assets = result.count;
         }
-      } catch { /* non-fatal */ }
+      } catch (e) { failed.push('assets'); console.error('[publish] assets failed:', e); }
 
       // Publish fonts
-      try { await publishFonts(); } catch { /* non-fatal */ }
+      try { await publishFonts(); } catch (e) { failed.push('fonts'); console.error('[publish] fonts failed:', e); }
 
       // Publish locales and translations
       try {
         const locResult = await publishLocalisation();
         changes.locales = locResult.locales;
         changes.translations = locResult.translations;
-      } catch { /* non-fatal */ }
+      } catch (e) { failed.push('localisation'); console.error('[publish] localisation failed:', e); }
 
       // Regenerate draft CSS from all current layers, then publish it
       try {
         await generateAndSaveDraftCSS();
         await publishCSS();
-      } catch { /* non-fatal */ }
+      } catch (e) { failed.push('css'); console.error('[publish] CSS failed:', e); }
 
       // Clear cache (tenant-scoped when request/session supplies x-tenant-id)
       try {
         await clearAllCache(await resolveEffectiveTenantId());
-      } catch { /* non-fatal */ }
+      } catch (e) { failed.push('cache'); console.error('[publish] cache clear failed:', e); }
 
       // Save published_at timestamp
-      try { await savePublishedAt(publishedAt); } catch { /* non-fatal */ }
+      try { await savePublishedAt(publishedAt); } catch (e) { failed.push('published_at'); console.error('[publish] published_at failed:', e); }
 
       const total = Object.values(changes).reduce((sum, n) => sum + n, 0);
 
@@ -167,10 +169,13 @@ export function registerPublishingTools(server: McpServer) {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            success: true,
-            message: `Published ${total} item(s) successfully`,
+            success: failed.length === 0,
+            message: failed.length === 0
+              ? `Published ${total} item(s) successfully`
+              : `Published ${total} item(s) with ${failed.length} step(s) failing: ${failed.join(', ')}`,
             published_at: publishedAt,
             changes,
+            ...(failed.length > 0 ? { failed_steps: failed } : {}),
           }, null, 2),
         }],
       };
