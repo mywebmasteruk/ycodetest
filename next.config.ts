@@ -61,12 +61,13 @@ const nextConfig: NextConfig = {
         headers: [
           {
             key: 'Cache-Control',
-            // Short CDN TTL; stale-while-revalidate must stay 0 — a long SWR (e.g. 86400)
-            // lets the edge keep serving old HTML for hours after publish while
-            // "revalidating", which matches "many refreshes before I see changes".
-            // Per-tenant Netlify-Cache-Tag + purge on publish (see proxy.ts, cacheService.ts).
+            // s-maxage=0 + must-revalidate: edge must check origin each time — no multi-minute
+            // stale HTML window (s-maxage=120 felt like “publish then wait ~2 min”). Browsers
+            // already get max-age=0. stale-while-revalidate stays 0 (long SWR = stale sites).
+            // Tenant-scoped Netlify-Cache-Tag + purge still cuts origin load after publish when
+            // NETLIFY_PURGE_API_TOKEN is set (proxy.ts, cacheService.ts).
             value:
-              'public, max-age=0, s-maxage=120, stale-while-revalidate=0, must-revalidate',
+              'public, max-age=0, s-maxage=0, stale-while-revalidate=0, must-revalidate',
           },
         ],
       },

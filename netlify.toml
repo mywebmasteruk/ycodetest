@@ -10,7 +10,7 @@
   HUSKY = "0"
   # Runtime (Functions): SITE_ID is injected automatically. For instant CDN purge after
   # Publish, add NETLIFY_PURGE_API_TOKEN in Netlify UI (Site settings → Environment variables).
-  # Without it, public HTML still refreshes within ~2 minutes (see next.config Cache-Control).
+  # Without it, edge may still hold entries until revalidation; HTML uses s-maxage=0 (see next.config).
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
