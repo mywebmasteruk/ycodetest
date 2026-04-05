@@ -1564,8 +1564,12 @@ export async function publishSingleItem(itemId: string): Promise<void> {
     await pubDraft;
   }
 
-  // Ensure published fields exist (values FK requires them)
-  const draftFields = await getFieldsByCollectionId(draftItem.collection_id, false);
+  // Ensure published fields exist (values FK requires them), including hidden tenancy keys.
+  const draftFields = await getFieldsByCollectionId(
+    draftItem.collection_id,
+    false,
+    { includeSystemFields: true },
+  );
   if (draftFields.length > 0) {
     const fieldsToUpsert = draftFields.map(f => {
       const rowTid =

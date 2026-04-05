@@ -17,6 +17,8 @@ import { randomUUID } from 'crypto';
 export interface FieldFilters {
   search?: string;
   excludeComputed?: boolean;
+  /** When true, include masjidweb tenancy fields (`tenant_id`, `tenant_slug`). Default false hides them from editor/API lists. Publishing must set true or published snapshots for those fields (and their values) never get created. */
+  includeSystemFields?: boolean;
 }
 
 /**
@@ -119,6 +121,9 @@ export async function getFieldsByCollectionId(
   }
 
   const SYSTEM_FIELD_KEYS = new Set(['tenant_id', 'tenant_slug']);
+  if (filters?.includeSystemFields) {
+    return data || [];
+  }
   const fields = (data || []).filter(
     (f) => !f.key || !SYSTEM_FIELD_KEYS.has(f.key),
   );

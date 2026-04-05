@@ -320,15 +320,19 @@ async function publishAllFields(collectionId: string): Promise<number> {
     throw new Error('Supabase not configured');
   }
 
-  // Get all draft fields
-  const draftFields = await getFieldsByCollectionId(collectionId, false);
+  // Include tenant_id / tenant_slug so their published field rows exist (required to publish item values that reference them).
+  const draftFields = await getFieldsByCollectionId(collectionId, false, {
+    includeSystemFields: true,
+  });
 
   if (draftFields.length === 0) {
     return 0;
   }
 
   // Get published fields for comparison
-  const publishedFields = await getFieldsByCollectionId(collectionId, true);
+  const publishedFields = await getFieldsByCollectionId(collectionId, true, {
+    includeSystemFields: true,
+  });
   const publishedById = new Map(publishedFields.map(f => [f.id, f]));
 
   const tenantId = await resolveEffectiveTenantId();
@@ -905,9 +909,13 @@ export async function needsPublishing(collectionId: string): Promise<boolean> {
     return true;
   }
 
-  // Check if any fields need publishing
-  const draftFields = await getFieldsByCollectionId(collectionId, false);
-  const publishedFields = await getFieldsByCollectionId(collectionId, true);
+  // Include system fields so length/content checks reflect unpublished tenancy columns.
+  const draftFields = await getFieldsByCollectionId(collectionId, false, {
+    includeSystemFields: true,
+  });
+  const publishedFields = await getFieldsByCollectionId(collectionId, true, {
+    includeSystemFields: true,
+  });
 
   if (draftFields.length !== publishedFields.length) {
     return true;
