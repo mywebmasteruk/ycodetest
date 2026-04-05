@@ -53,6 +53,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr merge ${{ steps.pr.outputs.number }} --merge --admin \
+          N=${{ steps.pr.outputs.number }}
+          gh pr merge "$N" --merge --admin \
             --subject "Sync upstream changes from main into tenant-multi" \
-            || echo "::warning::Auto-merge failed — merge manually on GitHub."
+            || gh pr merge "$N" --merge \
+            --subject "Sync upstream changes from main into tenant-multi" \
+            || echo "::warning::Auto-merge failed — resolve conflicts or merge manually on GitHub."
