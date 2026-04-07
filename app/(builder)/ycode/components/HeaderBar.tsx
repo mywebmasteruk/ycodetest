@@ -36,6 +36,7 @@ import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
 import { Separator } from '@/components/ui/separator';
 import { BackupRestoreDialog } from '@/components/project/BackupRestoreDialog';
+import { isCloudVersion } from '@/lib/utils';
 
 interface HeaderBarProps {
   user: User | null;
@@ -337,6 +338,16 @@ export default function HeaderBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
+            {isCloudVersion() && (
+              <>
+                <DropdownMenuItem asChild>
+                  <a href="https://dashboard.ycode.cloud/dashboard">
+                    Dashboard
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem
               onClick={() => router.push('/ycode/settings/general')}
             >

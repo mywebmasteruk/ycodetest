@@ -1,12 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 
 export default function ResetDatabasePage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -35,8 +33,7 @@ export default function ResetDatabasePage() {
         throw new Error(result.error || 'Failed to reset database');
       }
 
-      // Success - redirect to /ycode
-      router.push('/ycode');
+      window.location.href = '/ycode';
     } catch (err) {
       console.error('Error resetting database:', err);
       setError(err instanceof Error ? err.message : 'Failed to reset database');
