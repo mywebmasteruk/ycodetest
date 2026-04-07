@@ -1,61 +1,16 @@
-name: Sync main into tenant-multi (PR)
+name: Deprecated main-to-tenant sync
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  open-pr:
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check if tenant-multi is behind main
-        id: check
+      - name: Single-branch mode notice
         run: |
-          git fetch origin tenant-multi
-          BEHIND=$(git rev-list --count origin/tenant-multi..origin/main)
-          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
-
-      - name: Create or find PR
-        if: steps.check.outputs.behind != '0'
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          EXISTING=$(gh pr list --base tenant-multi --head main --state open --json number -q '.[0].number')
-          if [ -n "$EXISTING" ]; then
-            echo "PR #$EXISTING already open."
-            echo "number=$EXISTING" >> "$GITHUB_OUTPUT"
-          else
-            PR_URL=$(gh pr create \
-              --base tenant-multi \
-              --head main \
-              --title "Sync upstream changes from main into tenant-multi" \
-              --body "$(cat <<'EOF'
-          Automated PR — **main** has new commits not yet in **tenant-multi**.
-          This will be auto-merged after creation.
-          EOF
-          )")
-            PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-            echo "PR #$PR_NUM created."
-            echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Auto-merge PR into tenant-multi
-        if: steps.check.outputs.behind != '0' && steps.pr.outputs.number != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          N=${{ steps.pr.outputs.number }}
-          gh pr merge "$N" --merge --admin \
-            --subject "Sync upstream changes from main into tenant-multi" \
-            || gh pr merge "$N" --merge \
-            --subject "Sync upstream changes from main into tenant-multi" \
-            || echo "::warning::Auto-merge failed — resolve conflicts or merge manually on GitHub."
+          echo "::notice::Single-branch mode enabled: main is the production branch."
+          echo "::notice::This workflow is intentionally disabled."
