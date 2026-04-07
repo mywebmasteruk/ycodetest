@@ -2,7 +2,7 @@ name: Build check
 
 on:
   pull_request:
-    branches: [tenant-multi]
+    branches: [main]
 
 jobs:
   build:
