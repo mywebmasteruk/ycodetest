@@ -1,6 +1,8 @@
 # Multi-tenant / MasjidWeb customisations — reapply checklist
 
-The `tenant-multi` branch was reset toward **vanilla YCode** (`upstream/main`) for the builder, data layer, Supabase server, and routing. The items below were **removed or reverted** and can be reintroduced **one at a time** to find what breaks publish or the editor.
+> **Note:** Production is **`main`** only. The following describes a historical reset branch used for bisecting; keep using **`main`** for all new work.
+
+The former long-lived secondary branch was reset toward **vanilla YCode** (`upstream/main`) for the builder, data layer, Supabase server, and routing. The items below were **removed or reverted** and can be reintroduced **one at a time** to find what breaks publish or the editor.
 
 ## Critical warning (read first)
 

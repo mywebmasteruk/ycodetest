@@ -1,6 +1,5 @@
-# Previously synced `main` → `tenant-multi`. Production now uses **main** only.
-# Kept as a manual no-op so old workflow names still resolve; do not re-enable tenant-multi.
-name: Deprecated — tenant-multi sync (noop)
+# Kept as a manual no-op so old workflow filenames still resolve in GitHub. Builder: **main** only.
+name: Deprecated noop (historical)
 
 on:
   workflow_dispatch:
@@ -11,4 +10,4 @@ jobs:
     steps:
       - name: Main-only policy
         run: |
-          echo "::notice::masjidweb builder uses branch **main** only. No tenant-multi sync."
+          echo "::notice::Builder deploys from **main** only."
