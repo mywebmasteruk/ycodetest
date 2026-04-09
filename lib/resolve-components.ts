@@ -525,6 +525,7 @@ function tagLayersWithComponentId(layers: Layer[], componentId: string): Layer[]
  * @param components - Array of available components
  * @param parentComponentVariables - Variables of the parent component (for variableLinks resolution)
  * @param parentOverrides - Overrides from the parent component instance (for variableLinks resolution)
+ * @param _visitedComponentIds - Internal: tracks component IDs in the current resolution chain to prevent circular references
  * @returns Layer tree with components resolved
  */
 export function resolveComponents(
@@ -532,6 +533,7 @@ export function resolveComponents(
   components: Component[],
   parentComponentVariables?: ComponentVariable[],
   parentOverrides?: Layer['componentOverrides'],
+  _visitedComponentIds?: Set<string>,
 ): Layer[] {
   // Resolve variableLinks at this level first so nested instances
   // get the correct overrides before their children are resolved
@@ -539,19 +541,31 @@ export function resolveComponents(
     ? applyComponentOverrides(layers, parentOverrides, parentComponentVariables)
     : layers;
 
+  const visited = _visitedComponentIds ?? new Set<string>();
+
   return effectiveLayers.map(layer => {
     // If this layer is a component instance, populate its children from the component
     if (layer.componentId) {
+      // Circular reference guard: skip if this component is already being resolved up the chain
+      if (visited.has(layer.componentId)) {
+        console.warn('[resolveComponents] Circular component reference detected, skipping:', layer.componentId);
+        return { ...layer, children: [] };
+      }
+
       const component = components.find(c => c.id === layer.componentId);
 
       if (component?.layers?.length) {
+        // Track this component in the resolution chain
+        const innerVisited = new Set(visited);
+        innerVisited.add(layer.componentId);
+
         // The component's first layer is the actual content (Section, etc.)
         const componentContent = component.layers[0];
 
         // Recursively resolve nested components, passing current component's
         // variables and this instance's overrides so nested variableLinks resolve correctly
         const nestedResolved = componentContent.children
-          ? resolveComponents(componentContent.children, components, component.variables, layer.componentOverrides)
+          ? resolveComponents(componentContent.children, components, component.variables, layer.componentOverrides, innerVisited)
           : [];
 
         // Apply component variable overrides (or defaults) before tagging
@@ -616,7 +630,7 @@ export function resolveComponents(
     if (layer.children?.length) {
       return {
         ...layer,
-        children: resolveComponents(layer.children, components, parentComponentVariables, parentOverrides),
+        children: resolveComponents(layer.children, components, parentComponentVariables, parentOverrides, visited),
       };
     }
 

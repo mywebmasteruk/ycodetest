@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'async_hooks';
+
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { resolveEffectiveTenantId } from '@/lib/masjidweb/effective-tenant-id';
 import { credentials } from './credentials';
@@ -10,6 +12,17 @@ import type { SupabaseConfig, SupabaseCredentials } from '@/types';
  * Creates authenticated Supabase clients for server-side operations
  * Credentials are fetched from file-based storage or environment variables
  */
+
+/**
+ * Explicit tenant context for code running outside of a Next.js request
+ * (e.g. fire-and-forget webhook processing where headers() is unavailable).
+ */
+export const tenantStore = new AsyncLocalStorage<string>();
+
+/** Run an async function with an explicit tenant context. */
+export function runWithTenantId<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  return tenantStore.run(tenantId, fn);
+}
 
 /**
  * Get Supabase credentials from storage

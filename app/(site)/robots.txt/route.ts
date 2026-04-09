@@ -5,32 +5,16 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getSettingByKey } from '@/lib/repositories/settingsRepository';
+import { getSettingsByKeys } from '@/lib/repositories/settingsRepository';
 import { credentials } from '@/lib/credentials';
+import { getSiteBaseUrl } from '@/lib/url-utils';
 import type { SitemapSettings } from '@/types';
-
-/**
- * Get the base URL for robots.txt generation
- */
-function getBaseUrl(): string {
-  // Use environment variable if set
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '');
-  }
-
-  // Fallback to Vercel URL
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-
-  return '';
-}
 
 export async function GET() {
   try {
     const hasSupabaseCredentials = await credentials.exists();
     if (!hasSupabaseCredentials) {
-      const baseUrl = getBaseUrl();
+      const baseUrl = getSiteBaseUrl() || '';
       const fallback = `# Default robots.txt
 User-agent: *
 Allow: /
@@ -47,28 +31,21 @@ Sitemap: ${baseUrl}/sitemap.xml`;
       });
     }
 
-    // Get custom robots.txt content if set
-    const customRobots = await getSettingByKey('robots_txt');
-
-    // Get sitemap settings to determine if we should include sitemap reference
-    const sitemapSettings = await getSettingByKey('sitemap') as SitemapSettings | null;
+    const allSettings = await getSettingsByKeys(['robots_txt', 'sitemap', 'global_canonical_url']);
+    const sitemapSettings = allSettings.sitemap as SitemapSettings | null;
     const sitemapEnabled = sitemapSettings?.mode && sitemapSettings.mode !== 'none';
+    const baseUrl = getSiteBaseUrl({ globalCanonicalUrl: allSettings.global_canonical_url }) || '';
 
     let content: string;
 
+    const customRobots = allSettings.robots_txt;
     if (customRobots && typeof customRobots === 'string' && customRobots.trim()) {
-      // Use custom robots.txt content
       content = customRobots.trim();
 
-      // If sitemap is enabled and not already referenced, append it
       if (sitemapEnabled && !content.toLowerCase().includes('sitemap:')) {
-        const baseUrl = getBaseUrl();
         content += `\n\nSitemap: ${baseUrl}/sitemap.xml`;
       }
     } else {
-      // Generate default robots.txt
-      const baseUrl = getBaseUrl();
-
       content = `# Default robots.txt
 User-agent: *
 Allow: /
@@ -76,7 +53,6 @@ Allow: /
 # Disallow admin/editor paths
 Disallow: /ycode/`;
 
-      // Add sitemap reference if enabled
       if (sitemapEnabled) {
         content += `\n\n# Sitemap\nSitemap: ${baseUrl}/sitemap.xml`;
       }

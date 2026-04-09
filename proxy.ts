@@ -81,6 +81,14 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = requestHostname(request.headers);
 
+  // MCP endpoint uses its own token-based authentication — skip session auth.
+  // Cloud overlay proxies MUST also exempt this path to avoid login redirects.
+  if (pathname.startsWith('/ycode/mcp/')) {
+    const response = NextResponse.next();
+    response.headers.set('x-pathname', pathname);
+    return response;
+  }
+
   const provisioningSecret = process.env.PROVISIONING_WEBHOOK_SECRET;
   const isProvisionPublish =
     request.method === 'POST' &&

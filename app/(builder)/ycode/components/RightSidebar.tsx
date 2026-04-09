@@ -85,6 +85,9 @@ import { useLayerLocks } from '@/hooks/use-layer-locks';
 
 // 6. Utils, APIs, lib
 import { classesToDesign, mergeDesign, removeConflictsForClass, getRemovedPropertyClasses } from '@/lib/tailwind-class-mapper';
+import { resetLayerToStyle, hasStyleOverrides } from '@/lib/layer-style-utils';
+import { updateStyleAcrossStores } from '@/lib/layer-style-store-utils';
+import { useLiveLayerStyleUpdates } from '@/hooks/use-live-layer-style-updates';
 import { cn } from '@/lib/utils';
 import { sanitizeHtmlId } from '@/lib/html-utils';
 import { isFieldVariable, getCollectionVariable, findParentCollectionLayer, findAllParentCollectionLayers, isTextEditable, isTextContentLayer, isRichTextLayer, isHeadingLayer, findLayerWithParent, resetBindingsOnCollectionSourceChange, isInputInsideFilter, resolveFilterInputId, getLayerIndexes, indexedFindLayerById, indexedFindLayerWithParent, indexedFindParentCollectionLayer } from '@/lib/layer-utils';
@@ -612,6 +615,8 @@ const RightSidebar = React.memo(function RightSidebar({
 
   // Get applied layer style and its classes
   const getStyleById = useLayerStylesStore((state) => state.getStyleById);
+  const updateStyle = useLayerStylesStore((state) => state.updateStyle);
+  const liveLayerStyleUpdates = useLiveLayerStyleUpdates();
   const appliedStyle = selectedLayer?.styleId ? getStyleById(selectedLayer.styleId) : undefined;
   const styleClassesArray = useMemo(() => {
     if (!appliedStyle || !appliedStyle.classes) return [];
@@ -632,14 +637,18 @@ const RightSidebar = React.memo(function RightSidebar({
     if (styleClassesArray.length === 0) return new Set<string>();
     const overridden = new Set<string>();
 
-    // 1. Check for classes overridden by layer's custom classes
+    // 1. Check for style classes explicitly removed (not present in layer classes at all)
+    for (const styleClass of styleClassesArray) {
+      if (!classesArray.includes(styleClass)) {
+        overridden.add(styleClass);
+      }
+    }
+
+    // 2. Check for classes overridden by layer's custom classes (conflict detection)
     if (layerOnlyClasses.length > 0) {
       for (const layerClass of layerOnlyClasses) {
-        // Use the conflict detection utility
-        // If adding this layer class would remove any style classes, those are overridden
         const classesWithoutConflicts = removeConflictsForClass(styleClassesArray, layerClass);
 
-        // Find which style classes were removed (those are the overridden ones)
         for (const styleClass of styleClassesArray) {
           if (!classesWithoutConflicts.includes(styleClass)) {
             overridden.add(styleClass);
@@ -648,7 +657,7 @@ const RightSidebar = React.memo(function RightSidebar({
       }
     }
 
-    // 2. Check for classes from properties explicitly removed on the layer
+    // 3. Check for classes from properties explicitly removed on the layer
     if (appliedStyle?.design && selectedLayer) {
       const removedClasses = getRemovedPropertyClasses(
         selectedLayer.design,
@@ -659,7 +668,7 @@ const RightSidebar = React.memo(function RightSidebar({
     }
 
     return overridden;
-  }, [layerOnlyClasses, styleClassesArray, appliedStyle, selectedLayer]);
+  }, [classesArray, layerOnlyClasses, styleClassesArray, appliedStyle, selectedLayer]);
 
   // Update local state when selected layer changes (for settings fields)
   const [prevSelectedLayerId, setPrevSelectedLayerId] = useState<string | null>(null);
@@ -757,6 +766,63 @@ const RightSidebar = React.memo(function RightSidebar({
       handleClassesChange(newClasses);
     }
   }, [classesArray, handleClassesChange, selectedLayer, showTextStyleControls, activeTextStyleKey, handleLayerUpdate]);
+
+  // Remove a class that belongs to the applied style — tracks as styleOverrides
+  const removeStyleClass = useCallback((classToRemove: string) => {
+    if (!selectedLayer) return;
+    const newClasses = classesArray.filter(cls => cls !== classToRemove).join(' ');
+    setClassesInput(newClasses);
+    handleLayerUpdate(selectedLayer.id, {
+      classes: newClasses,
+      styleOverrides: {
+        classes: newClasses,
+        design: selectedLayer.styleOverrides?.design ?? selectedLayer.design,
+      },
+    });
+  }, [classesArray, handleLayerUpdate, selectedLayer]);
+
+  // Whether the style has any overrides (classes or design)
+  const styleHasOverrides = useMemo(() => {
+    if (!appliedStyle || !selectedLayer) return false;
+    return hasStyleOverrides(selectedLayer, appliedStyle);
+  }, [appliedStyle, selectedLayer]);
+
+  // Update the style definition with current layer values
+  const handleUpdateStyleFromClasses = useCallback(async () => {
+    if (!selectedLayer || !appliedStyle) return;
+    const currentClasses = classesInput;
+    const currentDesign = selectedLayer.design;
+
+    await updateStyle(appliedStyle.id, {
+      classes: currentClasses,
+      design: currentDesign,
+    });
+
+    updateStyleAcrossStores(appliedStyle.id, currentClasses, currentDesign);
+    handleLayerUpdate(selectedLayer.id, { styleOverrides: undefined });
+
+    if (liveLayerStyleUpdates) {
+      liveLayerStyleUpdates.broadcastStyleUpdate(appliedStyle.id, {
+        classes: currentClasses,
+        design: currentDesign,
+      });
+    }
+  }, [selectedLayer, appliedStyle, classesInput, updateStyle, handleLayerUpdate, liveLayerStyleUpdates]);
+
+  // Reset overrides back to the style's original classes/design
+  const handleResetStyleOverrides = useCallback(() => {
+    if (!selectedLayer || !appliedStyle) return;
+    const updatedLayer = resetLayerToStyle(selectedLayer, appliedStyle);
+    const resetClasses = Array.isArray(updatedLayer.classes)
+      ? updatedLayer.classes.join(' ')
+      : updatedLayer.classes || '';
+    setClassesInput(resetClasses);
+    handleLayerUpdate(selectedLayer.id, {
+      classes: updatedLayer.classes,
+      design: updatedLayer.design,
+      styleOverrides: undefined,
+    });
+  }, [selectedLayer, appliedStyle, handleLayerUpdate]);
 
   // Handle key press for adding classes
   const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1690,21 +1756,27 @@ const RightSidebar = React.memo(function RightSidebar({
         <hr className="mt-4" />
 
         {/* Design tab */}
-        <TabsContent value="design" className="flex-1 flex flex-col divide-y overflow-y-auto no-scrollbar data-[state=inactive]:hidden overflow-x-hidden mt-0">
+        <TabsContent value="design" className="flex-1 flex flex-col divide-y data-[state=inactive]:hidden mt-0 overflow-hidden">
 
-          {/* Layer Styles Panel - hide in text style mode except for richText sublayers */}
-          {(!showTextStyleControls || (selectedLayer && isRichTextLayer(selectedLayer))) && (
-            <LayerStylesPanel
-              layer={selectedLayer}
-              pageId={currentPageId}
-              onLayerUpdate={handleLayerUpdate}
-              activeTextStyleKey={selectedLayer && isRichTextLayer(selectedLayer) ? activeTextStyleKey : null}
-            />
-          )}
+          <div className="flex flex-col divide-y">
 
-          {activeTab === 'design' && (
-            <UIStateSelector selectedLayer={selectedLayer} />
-          )}
+            {/* Layer Styles Panel - hide in text style mode except for richText sublayers */}
+            {(!showTextStyleControls || (selectedLayer && isRichTextLayer(selectedLayer))) && (
+              <LayerStylesPanel
+                layer={selectedLayer}
+                pageId={currentPageId}
+                onLayerUpdate={handleLayerUpdate}
+                activeTextStyleKey={selectedLayer && isRichTextLayer(selectedLayer) ? activeTextStyleKey : null}
+              />
+            )}
+
+            {activeTab === 'design' && (
+              <UIStateSelector selectedLayer={selectedLayer} />
+            )}
+
+          </div>
+
+          <div className="overflow-y-auto no-scrollbar overflow-x-hidden divide-y ">
 
           {shouldShowControl('layout', selectedLayer) && !showTextStyleControls && (
             <LayoutControls layer={selectedLayer} onLayerUpdate={handleLayerUpdate} />
@@ -1789,9 +1861,10 @@ const RightSidebar = React.memo(function RightSidebar({
                   {layerOnlyClasses.map((cls, index) => (
                     <Badge
                       variant="secondary"
+                      className="truncate max-w-50"
                       key={`layer-${index}`}
                     >
-                      <span>{cls}</span>
+                      <span className="truncate">{cls}</span>
                       <Button
                         onClick={() => removeClass(cls)}
                         className="size-4! p-0! -mr-1"
@@ -1805,7 +1878,7 @@ const RightSidebar = React.memo(function RightSidebar({
                 </div>
               )}
 
-              {/* Layer style classes (strikethrough if overridden) */}
+              {/* Layer style classes (removable, strikethrough if overridden) */}
               {styleClassesArray.length > 0 && (
                 <div className="flex flex-col gap-2.5">
                   <div className="py-1 w-full flex items-center gap-2">
@@ -1823,11 +1896,21 @@ const RightSidebar = React.memo(function RightSidebar({
                         <Badge
                           variant="secondary"
                           key={`style-${index}`}
-                          className="opacity-60"
+                          className="opacity-60 truncate max-w-50"
                         >
-                          <span className={isOverridden ? 'line-through' : ''}>
+                          <span className={isOverridden ? 'line-through truncate' : 'truncate'}>
                             {cls}
                           </span>
+                          {!isOverridden && (
+                            <Button
+                              onClick={() => removeStyleClass(cls)}
+                              className="size-4! p-0! -mr-1"
+                              variant="outline"
+                              disabled={isLockedByOther}
+                            >
+                              <Icon name="x" className="size-2" />
+                            </Button>
+                          )}
                         </Badge>
                       );
                     })}
@@ -1836,6 +1919,9 @@ const RightSidebar = React.memo(function RightSidebar({
               )}
             </div>
           </SettingsPanel>
+
+          </div>
+
         </TabsContent>
 
         <TabsContent value="settings" className="flex-1 overflow-y-auto no-scrollbar mt-0 data-[state=inactive]:hidden">
