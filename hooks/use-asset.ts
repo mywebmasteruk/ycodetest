@@ -24,6 +24,7 @@ export function useAsset(assetId: string | null | undefined): Asset | null {
     }
   }, [isLoaded, loadAssets]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- mirror store lookup when id changes; assets load async */
   useEffect(() => {
     if (!assetId) {
       setAsset(null);
@@ -33,6 +34,7 @@ export function useAsset(assetId: string | null | undefined): Asset | null {
     const foundAsset = getAsset(assetId);
     setAsset(foundAsset);
   }, [assetId, getAsset]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return asset;
 }
@@ -52,10 +54,12 @@ export function useAssets(assetIds: (string | null | undefined)[]): (Asset | nul
     }
   }, [isLoaded, loadAssets]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- mirror store batch lookup when ids change */
   useEffect(() => {
     const foundAssets = assetIds.map(id => id ? getAsset(id) : null);
     setAssets(foundAssets);
   }, [assetIds, getAsset]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return assets;
 }

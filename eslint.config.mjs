@@ -11,6 +11,7 @@ const ignoresConfig = defineConfig([
     name: 'project/ignores',
     ignores: [
       '.next/',
+      '.netlify/',
       'node_modules/',
       'public/',
       '.vscode/',
@@ -19,6 +20,10 @@ const ignoresConfig = defineConfig([
       // Excluded from tsconfig.json; projectService cannot parse them
       '**/*.test.ts',
       '**/*.test.tsx',
+      // Next.js generated
+      'next-env.d.ts',
+      // Excluded from tsconfig.json; not type-checked by project service
+      'vitest.config.ts',
     ],
   },
 ]);

@@ -43,11 +43,13 @@ export function useControlledInput(
   const [localValue, setLocalValue] = useState('');
 
   // Sync local state when external value changes (e.g., undo/redo, breakpoint switch)
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional sync from external prop */
   useEffect(() => {
     const valueToSet = externalValue || '';
     const transformedValue = transform ? transform(valueToSet) : valueToSet;
     setLocalValue(transformedValue);
   }, [externalValue, transform]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Wrapper setter with optional sanitization
   const setValueSafely = (value: string) => {

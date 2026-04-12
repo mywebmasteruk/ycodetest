@@ -66,9 +66,9 @@ async function getOrCreateClient(): Promise<SupabaseClient | null> {
   const cookieOpts =
     typeof window !== 'undefined'
       ? supabaseCookieOptionsForHost(
-          window.location.hostname,
-          tenantDomainSuffixFromEnv(),
-        )
+        window.location.hostname,
+        tenantDomainSuffixFromEnv(),
+      )
       : undefined;
 
   browserClient = createSupabaseBrowserClient(config.url, config.anonKey, {
